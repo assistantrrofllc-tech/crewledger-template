@@ -4,7 +4,7 @@ Weekly report data aggregation.
 Queries the database for a date range and organizes receipts
 per-employee for the weekly email report.
 
-Spec: "Framed as 'Here is Omar's week' — not one giant data dump.
+Spec: "Framed as 'Here is Employee1's week' — not one giant data dump.
 Each section: daily spend summary at top, full transaction breakdown below.
 Flagged receipts clearly marked."
 """
@@ -32,7 +32,7 @@ def get_weekly_report_data(db, week_start: str = None, week_end: str = None) -> 
             "flagged_count": 3,
             "employees": [
                 {
-                    "name": "Omar",
+                    "name": "Employee1",
                     "total_spend": 456.78,
                     "receipt_count": 12,
                     "daily_summary": {

@@ -23,7 +23,7 @@ SCHEMA_PATH = Path(__file__).resolve().parent.parent / "src" / "database" / "sch
 SAMPLE_PROJECTS = [
     ("Sample Project", "123 Main St", "Anytown", "FL"),
     ("Falcon", "456 Oak Ave", "Orlando", "FL"),
-    ("Hawk", "789 Pine Rd", "Sanford", "FL"),
+    ("Demo Project", "789 Pine Rd", "Springfield", "FL"),
     ("Eagle", "321 Elm Blvd", "Winter Park", "FL"),
     ("Osprey", "654 Cedar Ln", "St Cloud", "FL"),
 ]

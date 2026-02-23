@@ -47,14 +47,14 @@ def setup_test_db():
     db.executescript(SCHEMA_PATH.read_text())
 
     # Employees
-    db.execute("INSERT INTO employees (id, phone_number, first_name, crew) VALUES (1, '+14075551111', 'Omar', 'Alpha')")
-    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (2, '+14075552222', 'Mario', 'Mario Gonzalez')")
+    db.execute("INSERT INTO employees (id, phone_number, first_name, crew) VALUES (1, '+14075551111', 'Employee1', 'Alpha')")
+    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (2, '+14075552222', 'Employee2', 'Employee Two')")
 
     # Projects
     db.execute("INSERT INTO projects (id, name) VALUES (1, 'Sample Project')")
-    db.execute("INSERT INTO projects (id, name) VALUES (2, 'Hawk')")
+    db.execute("INSERT INTO projects (id, name) VALUES (2, 'Demo Project')")
 
-    # Receipt 1: Omar, confirmed, with image and notes
+    # Receipt 1: Employee1, confirmed, with image and notes
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
@@ -65,26 +65,26 @@ def setup_test_db():
                 'Propane for site heater',
                 '2026-02-09 10:30:00')""")
 
-    # Receipt 2: Omar, confirmed
+    # Receipt 2: Employee1, confirmed
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, purchase_date, subtotal, tax, total,
          payment_method, status, project_id, matched_project_name, created_at)
         VALUES (2, 1, 'Home Depot', '2026-02-10', 42.50, 2.87, 45.37,
                 'CASH', 'confirmed', 1, 'Sample Project', '2026-02-10 14:15:00')""")
 
-    # Receipt 3: Omar, flagged
+    # Receipt 3: Employee1, flagged
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, purchase_date, total, status,
          flag_reason, created_at)
         VALUES (3, 1, 'QuikTrip', '2026-02-10', 35.00, 'flagged',
                 'Employee rejected OCR read', '2026-02-10 16:00:00')""")
 
-    # Receipt 4: Mario, flagged + missed
+    # Receipt 4: Employee2, flagged + missed
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, purchase_date, total, status,
          is_missed_receipt, flag_reason, matched_project_name, created_at)
         VALUES (4, 2, 'Home Depot', '2026-02-11', 67.89, 'flagged',
-                1, 'Missed receipt', 'Hawk', '2026-02-11 09:00:00')""")
+                1, 'Missed receipt', 'Demo Project', '2026-02-11 09:00:00')""")
 
     # Receipt 5: Previous week (for comparison stats)
     db.execute("""INSERT INTO receipts
@@ -237,7 +237,7 @@ def test_employees_page():
     client = get_test_client()
     resp = client.get("/employees")
     assert resp.status_code == 200
-    assert b"Omar" in resp.data
+    assert b"Employee1" in resp.data
     assert b"Employees" in resp.data
 
 
@@ -250,8 +250,8 @@ def test_api_employees_list():
     data = resp.get_json()
     assert len(data) == 2
     names = [e["first_name"] for e in data]
-    assert "Omar" in names
-    assert "Mario" in names
+    assert "Employee1" in names
+    assert "Employee2" in names
 
 
 def test_api_add_employee():
@@ -261,7 +261,7 @@ def test_api_add_employee():
     resp = client.post("/api/employees", json={
         "first_name": "Carlos",
         "phone_number": "+14075553333",
-        "crew": "Mario's Crew",
+        "crew": "Crew Beta",
         "role": "Driver",
     })
     assert resp.status_code == 201
@@ -273,7 +273,7 @@ def test_api_add_employee():
     emp = db.execute("SELECT * FROM employees WHERE phone_number = '+14075553333'").fetchone()
     assert emp is not None
     assert emp["first_name"] == "Carlos"
-    assert emp["crew"] == "Mario's Crew"
+    assert emp["crew"] == "Crew Beta"
     db.close()
 
 
@@ -283,7 +283,7 @@ def test_api_add_employee_duplicate_phone():
     client = get_test_client()
     resp = client.post("/api/employees", json={
         "first_name": "Duplicate",
-        "phone_number": "+14075551111",  # Omar's number
+        "phone_number": "+14075551111",  # Employee1's number
     })
     assert resp.status_code == 409
 
@@ -346,14 +346,14 @@ def test_api_update_employee():
     setup_test_db()
     client = get_test_client()
     resp = client.put("/api/employees/1", json={
-        "first_name": "Omar Jr",
+        "first_name": "Employee1 Jr",
         "crew": "Night Shift",
     })
     assert resp.status_code == 200
 
     db = get_db(TEST_DB)
     emp = db.execute("SELECT * FROM employees WHERE id = 1").fetchone()
-    assert emp["first_name"] == "Omar Jr"
+    assert emp["first_name"] == "Employee1 Jr"
     assert emp["crew"] == "Night Shift"
     db.close()
 
@@ -365,7 +365,7 @@ def test_api_employee_detail():
     resp = client.get("/api/employees/1")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["first_name"] == "Omar"
+    assert data["first_name"] == "Employee1"
     assert data["phone_number"] == "+14075551111"
     assert "employee_uuid" in data
 
@@ -485,7 +485,7 @@ def test_api_update_settings():
     setup_test_db()
     client = get_test_client()
     resp = client.put("/api/settings", json={
-        "recipient_email": "kim@roofing.com",
+        "recipient_email": "accountant@example.com",
         "frequency": "daily",
         "enabled": "1",
     })
@@ -494,7 +494,7 @@ def test_api_update_settings():
     # Verify
     resp2 = client.get("/api/settings")
     data = resp2.get_json()
-    assert data["recipient_email"] == "kim@roofing.com"
+    assert data["recipient_email"] == "accountant@example.com"
     assert data["frequency"] == "daily"
 
 
@@ -503,14 +503,14 @@ def test_api_update_settings_rejects_invalid():
     setup_test_db()
     client = get_test_client()
     resp = client.put("/api/settings", json={
-        "recipient_email": "kim@test.com",
+        "recipient_email": "accountant@test.com",
         "hacker_field": "evil_value",
     })
     assert resp.status_code == 200
 
     resp2 = client.get("/api/settings")
     data = resp2.get_json()
-    assert data["recipient_email"] == "kim@test.com"
+    assert data["recipient_email"] == "accountant@test.com"
     assert "hacker_field" not in data
 
 
@@ -866,7 +866,7 @@ def test_api_projects_list():
     assert len(data) == 2
     names = [p["name"] for p in data]
     assert "Sample Project" in names
-    assert "Hawk" in names
+    assert "Demo Project" in names
 
 
 def test_api_add_project():

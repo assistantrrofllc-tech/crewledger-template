@@ -38,18 +38,18 @@ def setup_test_db():
     db.executescript(SCHEMA_PATH.read_text())
 
     # Employees
-    db.execute("INSERT INTO employees (id, phone_number, first_name) VALUES (1, '+14075551111', 'Omar')")
-    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (2, '+14075552222', 'Mario', 'Mario Gonzalez')")
+    db.execute("INSERT INTO employees (id, phone_number, first_name) VALUES (1, '+14075551111', 'Employee1')")
+    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (2, '+14075552222', 'Employee2', 'Employee Two')")
 
     # Projects
     db.execute("INSERT INTO projects (id, name) VALUES (1, 'Sample Project')")
-    db.execute("INSERT INTO projects (id, name) VALUES (2, 'Hawk')")
+    db.execute("INSERT INTO projects (id, name) VALUES (2, 'Demo Project')")
 
     # Categories (already seeded by schema, but grab IDs)
     # Schema seeds: Roofing Materials(1), Tools & Equipment(2), Fasteners & Hardware(3),
     #               Safety & PPE(4), Fuel & Propane(5), Office & Misc(6), Consumables(7)
 
-    # Receipt 1: Omar, confirmed, full data, Project Sample Project
+    # Receipt 1: Employee1, confirmed, full data, Project Sample Project
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
@@ -58,7 +58,7 @@ def setup_test_db():
                 94.57, 6.07, 100.64, 'Mastercard ending 7718', 'confirmed', 1, 'Sample Project',
                 '2026-02-09 10:30:00')""")
 
-    # Receipt 2: Omar, confirmed, Project Sample Project
+    # Receipt 2: Employee1, confirmed, Project Sample Project
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
@@ -67,23 +67,23 @@ def setup_test_db():
                 42.50, 2.87, 45.37, 'CASH', 'confirmed', 1, 'Sample Project',
                 '2026-02-10 14:15:00')""")
 
-    # Receipt 3: Omar, flagged (should NOT appear in export)
+    # Receipt 3: Employee1, flagged (should NOT appear in export)
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, purchase_date, total, status,
          flag_reason, created_at)
         VALUES (3, 1, 'QuikTrip', '2026-02-10', 35.00, 'flagged',
                 'Employee rejected OCR read', '2026-02-10 16:00:00')""")
 
-    # Receipt 4: Mario, confirmed, Project Hawk
+    # Receipt 4: Employee2, confirmed, Project Demo Project
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
          created_at)
         VALUES (4, 2, 'Lowe''s', 'Anytown', 'FL', '2026-02-11',
-                67.89, 4.75, 72.64, 'VISA 4321', 'confirmed', 2, 'Hawk',
+                67.89, 4.75, 72.64, 'VISA 4321', 'confirmed', 2, 'Demo Project',
                 '2026-02-11 09:00:00')""")
 
-    # Receipt 5: Omar, pending (should appear — pending is valid for export)
+    # Receipt 5: Employee1, pending (should appear — pending is valid for export)
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, purchase_date,
          subtotal, tax, total, payment_method, status, matched_project_name,
@@ -211,14 +211,14 @@ def test_export_memo_format():
     resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15")
     rows = parse_csv_response(resp)
 
-    # Receipt 1: Omar (no full_name) on Project Sample Project
+    # Receipt 1: Employee1 (no full_name) on Project Sample Project
     assert "Sample Project" in rows[0]["Memo"]
-    assert "Omar" in rows[0]["Memo"]
+    assert "Employee1" in rows[0]["Memo"]
 
-    # Receipt 4: Mario Gonzalez (has full_name) on Project Hawk
-    mario_row = next(r for r in rows if "Mario" in r["Memo"])
-    assert "Hawk" in mario_row["Memo"]
-    assert "Mario Gonzalez" in mario_row["Memo"]
+    # Receipt 4: Employee Two (has full_name) on Project Demo Project
+    emp2_row = next(r for r in rows if "Employee2" in r["Memo"])
+    assert "Demo Project" in emp2_row["Memo"]
+    assert "Employee Two" in emp2_row["Memo"]
     print("  PASS: memo formatted correctly")
 
 
@@ -264,7 +264,7 @@ def test_export_filter_by_employee():
     rows = parse_csv_response(resp)
 
     assert len(rows) == 1
-    assert "Mario" in rows[0]["Memo"]
+    assert "Employee2" in rows[0]["Memo"]
     print("  PASS: employee_id filter works")
 
 
@@ -272,11 +272,11 @@ def test_export_filter_by_project():
     """project filter returns only receipts for that project."""
     setup_test_db()
     client = get_test_client()
-    resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15&project=Hawk")
+    resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15&project=Demo Project")
     rows = parse_csv_response(resp)
 
     assert len(rows) == 1
-    assert "Hawk" in rows[0]["Memo"]
+    assert "Demo Project" in rows[0]["Memo"]
     print("  PASS: project filter works")
 
 

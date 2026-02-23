@@ -179,7 +179,7 @@ def test_format_full_receipt():
             {"item_name": "20lb Propane Cylinder", "quantity": 1, "unit_price": 59.99, "extended_price": 59.99},
         ],
     }
-    msg = format_confirmation_message(data, "Omar", "Project Sample Project")
+    msg = format_confirmation_message(data, "Employee1", "Project Sample Project")
     assert "Ace Home & Supply" in msg
     assert "Anytown FL" in msg
     assert "02/18/26" in msg
@@ -187,7 +187,7 @@ def test_format_full_receipt():
     assert "3 items" in msg
     assert "Utility Lighter ($7.59)" in msg
     assert "Project: Project Sample Project" in msg
-    assert "Omar" in msg
+    assert "Employee1" in msg
     assert "YES" in msg
     assert "NO" in msg
     print("  PASS: full receipt formatted correctly")
@@ -205,10 +205,10 @@ def test_format_no_project():
             {"item_name": "Fuel", "extended_price": 35.00},
         ],
     }
-    msg = format_confirmation_message(data, "Mario", None)
+    msg = format_confirmation_message(data, "Employee2", None)
     assert "Project:" not in msg
     assert "QuikTrip" in msg
-    assert "Mario" in msg
+    assert "Employee2" in msg
     print("  PASS: no project name → no Project line")
 
 
@@ -219,7 +219,7 @@ def test_format_no_items():
         "total": 12.50,
         "line_items": [],
     }
-    msg = format_confirmation_message(data, "Luis", "Hawk")
+    msg = format_confirmation_message(data, "Employee3", "Demo Project")
     assert "No line items detected" in msg
     assert "$12.50" in msg
     print("  PASS: no items → 'No line items detected'")
@@ -236,7 +236,7 @@ def test_format_many_items_truncated():
         "total": 8.00,
         "line_items": items,
     }
-    msg = format_confirmation_message(data, "Omar", None)
+    msg = format_confirmation_message(data, "Employee1", None)
     assert "8 items" in msg
     assert "+3 more" in msg
     print("  PASS: 8 items → shows 5 + '+3 more'")
@@ -249,7 +249,7 @@ def test_format_null_total():
         "total": None,
         "line_items": [],
     }
-    msg = format_confirmation_message(data, "Omar", None)
+    msg = format_confirmation_message(data, "Employee1", None)
     assert "unknown amount" in msg
     print("  PASS: null total → 'unknown amount'")
 

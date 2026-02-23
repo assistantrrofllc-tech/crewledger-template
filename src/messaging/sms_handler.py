@@ -152,11 +152,11 @@ def _extract_name_from_intro(body: str) -> str | None:
     """Try to pull a first name out of an intro message.
 
     Handles patterns like:
-        "This is Omar"
-        "Hey this is Omar, driver for Mario's crew"
-        "Omar here"
-        "My name is Omar"
-        Just "Omar" (single word)
+        "This is Employee1"
+        "Hey this is Employee1, driver for Alpha crew"
+        "Employee1 here"
+        "My name is Employee1"
+        Just "Employee1" (single word)
     """
     if not body:
         return None

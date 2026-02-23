@@ -160,7 +160,7 @@ A banking-style transaction ledger. This is Accountant's primary working view. I
 | Column | Example | Notes |
 |---|---|---|
 | Date | Feb 18, 2026 | |
-| Employee | Omar | |
+| Employee | Employee1 | |
 | Vendor | Ace Home & Supply | |
 | Project | Sample Project | |
 | Category | Materials | Color coded badge |

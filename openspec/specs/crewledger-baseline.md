@@ -213,7 +213,7 @@ Receives all incoming SMS/MMS from Twilio. Validates signature, parses message (
 ### 4.2 Employee Auto-Registration
 
 First-time texters are auto-registered by phone number. Name extracted from message using regex patterns:
-- "This is Omar" / "My name is Omar" / "I'm Omar" / "Omar here"
+- "This is Employee1" / "My name is Employee1" / "I'm Employee1" / "Employee1 here"
 - Single word that looks like a name (not a common word)
 
 If no name detected, system asks: "What's your name?"
@@ -282,7 +282,7 @@ Ace Home & Supply, Anytown FL — 02/18/26 — $100.64
 3 items: Utility Lighter ($7.59), Propane Exchange ($27.99), 20lb Propane Cylinder ($59.99)
 Project: Sample Project
 
-Is that correct, Omar? Reply YES to save or NO to flag.
+Is that correct, Employee1? Reply YES to save or NO to flag.
 ```
 
 Line items capped at 5 in the confirmation SMS to keep it readable.

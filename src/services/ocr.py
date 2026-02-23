@@ -196,7 +196,7 @@ def format_confirmation_message(receipt_data: dict, first_name: str, project_nam
         "Ace Home & Supply, Anytown FL — 02/18/26 — $100.64
          3 items: Utility Lighter ($7.59), Propane Exchange ($27.99), ...
          Project: Sample Project
-         Is that correct, Omar? Reply YES to save or NO to flag."
+         Is that correct, Employee1? Reply YES to save or NO to flag."
     """
     vendor = receipt_data.get("vendor_name") or "Unknown vendor"
     city = receipt_data.get("vendor_city") or ""
