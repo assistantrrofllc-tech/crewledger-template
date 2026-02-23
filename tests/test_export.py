@@ -216,7 +216,7 @@ def test_export_memo_format():
     assert "Employee1" in rows[0]["Memo"]
 
     # Receipt 4: Employee Two (has full_name) on Project Demo Project
-    emp2_row = next(r for r in rows if "Employee2" in r["Memo"])
+    emp2_row = next(r for r in rows if "Employee Two" in r["Memo"])
     assert "Demo Project" in emp2_row["Memo"]
     assert "Employee Two" in emp2_row["Memo"]
     print("  PASS: memo formatted correctly")
@@ -264,7 +264,7 @@ def test_export_filter_by_employee():
     rows = parse_csv_response(resp)
 
     assert len(rows) == 1
-    assert "Employee2" in rows[0]["Memo"]
+    assert "Employee Two" in rows[0]["Memo"]
     print("  PASS: employee_id filter works")
 
 
