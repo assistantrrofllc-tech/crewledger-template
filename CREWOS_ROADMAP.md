@@ -1,7 +1,7 @@
 # CrewOS — Full System Roadmap
 
 **Modular Field Operations Platform for Small Business**
-**Your Company LLC | Client Admin | Feb 2026**
+**Tech Quest LLC | Admin User | Feb 2026**
 
 > This is the living roadmap for CrewOS. Update it as modules are completed and priorities shift. Every chat, every Claude session, every build decision should reference this document.
 
@@ -237,7 +237,7 @@ CrewGroup is the most complex module and also the most dependent on the others. 
 | Module 5 | CrewSchedule | Parallel with Maintenance | Job calendar, crew assignment, mobile view |
 | Module 6 | CrewGroup | Last | Full project management, job costing, profitability |
 
-> This timeline is intentionally loose. Each phase moves when the previous one is stable and trusted in the real world — not when the code is written. Code is not done until Accountant and the field crew are using it without issues.
+> This timeline is intentionally loose. Each phase moves when the previous one is stable and trusted in the real world — not when the code is written. Code is not done until the accountant and the field crew are using it without issues.
 
 ---
 
@@ -253,10 +253,10 @@ CrewGroup is the most complex module and also the most dependent on the others. 
 | Deployment | GitHub -> update.sh | Push to GitHub, run one script, live in seconds |
 | Frontend | Plain HTML/CSS/JS | No React, no build step — keeps it simple and fast |
 | SSL | Let's Encrypt | Auto-renews — never touch it |
-| Email | Gmail SMTP | reports@clientcompany.com — upgrade to SendGrid at scale |
+| Email | Gmail SMTP | assistant.rrofllc@gmail.com — upgrade to SendGrid at scale |
 | Spec management | OpenSpec | Spec-driven development — proposals before code |
 | Version control | GitHub | your-org/crewledger |
-| Domain | your-domain.com | Hostinger — auto-renewal OFF — turn it on now |
+| Domain | techquest-ai.com | Hostinger — auto-renewal OFF — turn it on now |
 
 ---
 
@@ -273,11 +273,11 @@ A la carte subscription. Companies pay for the modules they use. Everything is i
 | CrewSchedule | Everyone knows where to be. | Crews stop calling asking where to go. |
 | CrewGroup | Know if every job made money. | Real job costing, not gut feeling. |
 
-> Pricing is TBD. The priority is getting a working model that R&R Florida trusts and uses daily. Revenue conversations come after that proof point exists.
+> Pricing is TBD. The priority is getting a working model that Client Company trusts and uses daily. Revenue conversations come after that proof point exists.
 
 ---
 
-## First Client — R&R Florida
+## First Client — Client Company
 
 Client Company LLC is Client #1 and the real-world test bed for everything. If it doesn't work for them, it doesn't ship to anyone else.
 
@@ -294,7 +294,7 @@ Client Company LLC is Client #1 and the real-world test bed for everything. If i
 ## Build Guardrails — Always
 
 - **Finish one module before starting the next.** Partial systems create debt.
-- **Real world use is the only proof.** Code that isn't being used by Accountant and the crew is not done.
+- **Real world use is the only proof.** Code that isn't being used by the accountant and the crew is not done.
 - **The employee database is sacred.** Every module depends on it. Changes require review.
 - **Mobile first on every UI decision.** Field crews live on their phones.
 - **Keep it familiar.** Tools should feel like tools people already know.
@@ -304,4 +304,4 @@ Client Company LLC is Client #1 and the real-world test bed for everything. If i
 
 ---
 
-*CrewOS Full System Roadmap | Feb 2026 | Client Admin | Your Company LLC | Living Document — Update As Things Change*
+*CrewOS Full System Roadmap | Feb 2026 | Admin User | Tech Quest LLC | Living Document — Update As Things Change*

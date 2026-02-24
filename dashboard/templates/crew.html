@@ -1,0 +1,351 @@
+{% extends "base.html" %}
+{% block title %}CrewCert — Crew{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Crew</h1>
+    <div class="header-actions">
+        <button class="btn btn--primary" onclick="showAddEmployeeForm()">+ Add Employee</button>
+    </div>
+</div>
+
+<!-- Add Employee Form (hidden by default) -->
+<div id="add-employee-form" class="card" style="display:none; margin-bottom: 20px;">
+    <h3>Add Employee</h3>
+    <div id="add-emp-error" class="error-msg" style="display:none;"></div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>First Name *</label>
+            <input type="text" id="emp-first-name" placeholder="First name">
+        </div>
+        <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="emp-full-name" placeholder="Full name">
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Phone *</label>
+            <input type="tel" id="emp-phone" placeholder="(555) 123-4567">
+        </div>
+        <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="emp-email" placeholder="email@example.com">
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Crew</label>
+            <input type="text" id="emp-crew" placeholder="Crew name">
+        </div>
+        <div class="form-group">
+            <label>Role</label>
+            <input type="text" id="emp-role" placeholder="Role / title">
+        </div>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn--primary" onclick="submitAddEmployee()">Save</button>
+        <button class="btn btn--secondary" onclick="hideAddEmployeeForm()">Cancel</button>
+    </div>
+</div>
+
+<!-- Search & Filter -->
+<div class="crew-filters">
+    <div class="search-bar">
+        <input type="text" id="crew-search" placeholder="Search by name or crew..." oninput="filterCrewList()">
+    </div>
+    <div class="crew-filter-pills">
+        <button class="filter-btn active" data-filter="all" onclick="setCrewFilter('all', this)">All</button>
+        <button class="filter-btn" data-filter="active" onclick="setCrewFilter('active', this)">Active</button>
+        <button class="filter-btn" data-filter="expired" onclick="setCrewFilter('expired', this)">Has Expired</button>
+        <button class="filter-btn" data-filter="expiring" onclick="setCrewFilter('expiring', this)">Expiring Soon</button>
+    </div>
+</div>
+
+<!-- Employee List -->
+<div id="crew-loading" class="loading">Loading crew roster...</div>
+<div id="crew-empty" class="card" style="display:none; text-align:center; padding:48px 20px;">
+    <p style="color:var(--text-muted); font-size:16px;">No employees found. Add your first crew member above.</p>
+</div>
+<div id="crew-groups" style="display:none;"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let crewData = [];
+let currentFilter = 'all';
+
+document.addEventListener('DOMContentLoaded', loadCrewList);
+
+async function loadCrewList() {
+    try {
+        const resp = await fetch('/api/crew/employees');
+        crewData = await resp.json();
+        renderCrewList(crewData);
+    } catch (err) {
+        document.getElementById('crew-loading').textContent = 'Failed to load crew data.';
+    }
+}
+
+function renderCrewList(employees) {
+    const loading = document.getElementById('crew-loading');
+    const empty = document.getElementById('crew-empty');
+    const container = document.getElementById('crew-groups');
+
+    loading.style.display = 'none';
+
+    if (employees.length === 0) {
+        empty.style.display = 'block';
+        container.style.display = 'none';
+        return;
+    }
+
+    empty.style.display = 'none';
+    container.style.display = 'block';
+
+    // Group employees by crew field
+    const groups = {};
+    employees.forEach(emp => {
+        const key = emp.crew || 'Unassigned';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(emp);
+    });
+
+    // Sort group names alphabetically, "Unassigned" last
+    const sortedKeys = Object.keys(groups).sort((a, b) => {
+        if (a === 'Unassigned') return 1;
+        if (b === 'Unassigned') return -1;
+        return a.localeCompare(b);
+    });
+
+    let html = '';
+    sortedKeys.forEach(crewName => {
+        const members = groups[crewName];
+        const expiredCount = members.filter(e => e.has_expired).length;
+        const expiringCount = members.filter(e => e.has_expiring).length;
+
+        let alertsHtml = '';
+        if (expiredCount > 0) {
+            alertsHtml += `<span class="crew-group__alert-tag crew-group__alert-tag--expired">${expiredCount} expired</span>`;
+        }
+        if (expiringCount > 0) {
+            alertsHtml += `<span class="crew-group__alert-tag crew-group__alert-tag--expiring">${expiringCount} expiring</span>`;
+        }
+
+        html += `<div class="crew-group" data-crew-group="${escHtml(crewName.toLowerCase())}">`;
+        html += `<div class="crew-group__header" onclick="toggleCrewGroup(this.parentElement)">`;
+        html += `<span class="crew-group__toggle">\u25BC</span>`;
+        html += `<span class="crew-group__name">${escHtml(crewName === 'Unassigned' ? 'Unassigned' : crewName + "'s Crew")}</span>`;
+        html += `<span class="crew-group__count">${members.length} member${members.length !== 1 ? 's' : ''}</span>`;
+        html += `<div class="crew-group__alerts">${alertsHtml}</div>`;
+        html += `</div>`;
+        html += `<div class="crew-group__body"><div class="crew-grid" style="display:grid;">`;
+
+        members.forEach(emp => {
+            html += renderEmployeeCard(emp);
+        });
+
+        html += `</div></div></div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+function renderEmployeeCard(emp) {
+    const name = emp.full_name || emp.first_name;
+    const displayName = emp.nickname ? name + ' (' + emp.nickname + ')' : name;
+    const phone = emp.phone_number || '';
+    const email = emp.email || '';
+    const crewRole = [emp.crew, emp.role].filter(Boolean).join(' \u00b7 ');
+    const statusClass = emp.is_active ? 'badge--confirmed' : 'badge--rejected';
+    const statusLabel = emp.is_active ? 'Active' : 'Inactive';
+    const initials = getInitials(name);
+    const isPlaceholder = phone.startsWith('placeholder') || phone.startsWith('+1placeholder');
+
+    let contactHtml = '';
+    if (phone && !isPlaceholder) {
+        contactHtml += `<a href="tel:${phone}" class="crew-row__phone" onclick="event.stopPropagation()">${formatPhone(phone)}</a>`;
+    } else {
+        contactHtml += `<span class="crew-card__add-phone" title="Add phone number">+ phone</span>`;
+    }
+    if (email) {
+        contactHtml += `<span>${escHtml(email)}</span>`;
+    }
+
+    let badgesHtml = '';
+    if (emp.is_driver) {
+        badgesHtml += '<span class="cert-badge cert-badge--valid" title="Driver"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>DR</span>';
+    }
+    if (emp.certs) {
+        emp.certs.forEach(c => {
+            if (c.status !== 'none') badgesHtml += certBadge(c.slug, c.status, c.name);
+        });
+    }
+
+    return `
+    <div class="crew-card" onclick="window.location='/crew/${emp.id}'"
+         data-name="${displayName.toLowerCase()}"
+         data-crew="${(emp.crew || '').toLowerCase()}"
+         data-active="${emp.is_active ? '1' : '0'}"
+         data-expired="${emp.has_expired ? '1' : '0'}"
+         data-expiring="${emp.has_expiring ? '1' : '0'}">
+        <div class="crew-card__header">
+            <div class="crew-card__avatar">${initials}</div>
+            <div class="crew-card__info">
+                <div class="crew-card__name">${escHtml(displayName)}</div>
+                ${crewRole ? `<div class="crew-card__role">${escHtml(crewRole)}</div>` : ''}
+            </div>
+            <div class="crew-card__status">
+                <span class="badge ${statusClass}">${statusLabel}</span>
+            </div>
+        </div>
+        <div class="crew-card__contact">${contactHtml}</div>
+        <div class="crew-card__badges">${badgesHtml}</div>
+    </div>`;
+}
+
+function toggleCrewGroup(groupEl) {
+    groupEl.classList.toggle('crew-group--collapsed');
+}
+
+function getInitials(name) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+}
+
+// SVG icons for each cert type — small inline pictograms
+var CERT_ICONS = {
+    'osha-10':  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h2l1-5h14l1 5h2"/><path d="M6 13c0-4 2.5-8 6-9 3.5 1 6 5 6 9"/></svg>',
+    'osha-30':  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h2l1-5h14l1 5h2"/><path d="M6 13c0-4 2.5-8 6-9 3.5 1 6 5 6 9"/><path d="M12 4v2"/></svg>',
+    'first-aid-cpr': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v12"/><path d="M6 12h12"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>',
+    'fall-protection': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v5"/><path d="M8 22l4-10 4 10"/><path d="M9 12h6"/></svg>',
+    'ext-reach-forklift': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="14" width="10" height="6" rx="1"/><path d="M16 8h4v12h-4"/><path d="M12 17h4"/><circle cx="5" cy="22" r="1.5"/><circle cx="9" cy="22" r="1.5"/><path d="M16 8V4h4"/></svg>',
+    'driver': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>',
+    'bilingual': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 10"/><path d="M10 8l-5 10"/><path d="M2 14h8"/><path d="M15 4h6"/><path d="M18 4v8"/><path d="M15 8c1 2 3 4 6 4"/><path d="M21 8c-1 2-3 4-6 4"/></svg>',
+    'crew-lead': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12,2 15,9 22,9 16.5,14 18.5,21 12,17 5.5,21 7.5,14 2,9 9,9"/></svg>',
+    'card-holder': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>',
+    'aerial-work-platform': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-4h6v4"/><path d="M10 11h4"/></svg>',
+    'basic-rigging': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8"/><path d="M8 10h8"/><path d="M6 10l-2 10h4"/><path d="M18 10l2 10h-4"/><path d="M10 20h4"/></svg>',
+    'rigger-signal-person': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M12 6v4"/><path d="M8 10h8"/><path d="M6 10l-2 10h4"/><path d="M18 10l2 10h-4"/><path d="M10 20h4"/></svg>'
+};
+
+var CERT_ABBR = {
+    'osha-10': 'O10', 'osha-30': 'O30', 'first-aid-cpr': 'FA',
+    'fall-protection': 'FP', 'ext-reach-forklift': 'FK', 'aerial-work-platform': 'AW',
+    'driver': 'DR', 'bilingual': 'BL', 'crew-lead': 'CL', 'card-holder': 'CH',
+    'basic-rigging': 'BR', 'rigger-signal-person': 'RS'
+};
+
+function certBadge(slug, status, name) {
+    var icon = CERT_ICONS[slug] || '';
+    var abbr = CERT_ABBR[slug] || slug.substring(0, 2).toUpperCase();
+    // no_expiry renders like valid (cert exists, just no date)
+    var cssStatus = (status === 'no_expiry') ? 'valid' : status;
+    var title = name + ': ' + (status === 'no_expiry' ? 'no expiry date' : status);
+    var cls = 'cert-badge cert-badge--' + cssStatus;
+    return '<span class="' + cls + '" title="' + title + '">' + icon + abbr + '</span>';
+}
+
+function formatPhone(phone) {
+    if (phone && phone.startsWith('+1') && phone.length === 12) {
+        return '(' + phone.slice(2,5) + ') ' + phone.slice(5,8) + '-' + phone.slice(8);
+    }
+    return phone;
+}
+
+function escHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function filterCrewList() {
+    const query = document.getElementById('crew-search').value.toLowerCase();
+    const groups = document.querySelectorAll('.crew-group');
+
+    groups.forEach(group => {
+        const cards = group.querySelectorAll('.crew-card');
+        let anyVisible = false;
+
+        cards.forEach(card => {
+            const name = card.dataset.name;
+            const crew = card.dataset.crew;
+            const matchesSearch = !query || name.includes(query) || crew.includes(query);
+            let matchesFilter = true;
+            if (currentFilter === 'active') matchesFilter = card.dataset.active === '1';
+            else if (currentFilter === 'expired') matchesFilter = card.dataset.expired === '1';
+            else if (currentFilter === 'expiring') matchesFilter = card.dataset.expiring === '1';
+            const visible = matchesSearch && matchesFilter;
+            card.style.display = visible ? '' : 'none';
+            if (visible) anyVisible = true;
+        });
+
+        // Hide entire group if no cards visible
+        group.style.display = anyVisible ? '' : 'none';
+    });
+}
+
+function setCrewFilter(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.crew-filter-pills .filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    filterCrewList();
+}
+
+function showAddEmployeeForm() {
+    document.getElementById('add-employee-form').style.display = 'block';
+    document.getElementById('emp-first-name').focus();
+}
+
+function hideAddEmployeeForm() {
+    document.getElementById('add-employee-form').style.display = 'none';
+    document.getElementById('add-emp-error').style.display = 'none';
+    ['emp-first-name','emp-full-name','emp-phone','emp-email','emp-crew','emp-role'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+}
+
+async function submitAddEmployee() {
+    const firstName = document.getElementById('emp-first-name').value.trim();
+    const phone = document.getElementById('emp-phone').value.trim();
+    const errEl = document.getElementById('add-emp-error');
+
+    if (!firstName || !phone) {
+        errEl.textContent = 'First name and phone number are required.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    errEl.style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/employees', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                first_name: firstName,
+                full_name: document.getElementById('emp-full-name').value.trim() || undefined,
+                phone_number: phone,
+                email: document.getElementById('emp-email').value.trim() || undefined,
+                crew: document.getElementById('emp-crew').value.trim() || undefined,
+                role: document.getElementById('emp-role').value.trim() || undefined,
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            errEl.textContent = data.error || 'Failed to add employee.';
+            errEl.style.display = 'block';
+            return;
+        }
+        hideAddEmployeeForm();
+        loadCrewList();
+    } catch (err) {
+        errEl.textContent = 'Network error. Please try again.';
+        errEl.style.display = 'block';
+    }
+}
+</script>
+{% endblock %}

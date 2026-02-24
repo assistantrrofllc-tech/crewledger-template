@@ -15,6 +15,7 @@ project matching, categorization, etc.)
 import json
 import logging
 import re
+import secrets
 
 from src.database.connection import get_db
 from src.services.image_store import download_and_save_image
@@ -78,7 +79,7 @@ def handle_incoming_message(parsed: dict) -> str | None:
         return (
             f"Hey {first_name}, I didn't quite get that. "
             "To submit a receipt, text me a photo with the project name. "
-            "Example: [photo] Project Sample Project"
+            "Example: [photo] Project Alpha"
         )
     finally:
         db.close()
@@ -124,9 +125,10 @@ def _handle_new_employee(db, phone: str, body: str, media: list) -> str:
             "I'll get you set up."
         )
 
+    token = secrets.token_urlsafe(12)
     db.execute(
-        "INSERT INTO employees (phone_number, first_name) VALUES (?, ?)",
-        (phone, name),
+        "INSERT INTO employees (phone_number, first_name, public_token) VALUES (?, ?, ?)",
+        (phone, name, token),
     )
     db.commit()
     log.info("New employee registered: %s (%s)", name, phone)
@@ -144,7 +146,7 @@ def _handle_new_employee(db, phone: str, body: str, media: list) -> str:
     return (
         f"Welcome to CrewLedger, {name}! You're all set. "
         "Send me a photo of a receipt with the project name to get started. "
-        "Example: [photo] Project Sample Project"
+        "Example: [photo] Project Alpha"
     )
 
 
@@ -153,7 +155,7 @@ def _extract_name_from_intro(body: str) -> str | None:
 
     Handles patterns like:
         "This is Employee1"
-        "Hey this is Employee1, driver for Alpha crew"
+        "Hey this is Employee1, driver for Employee2's crew"
         "Employee1 here"
         "My name is Employee1"
         Just "Employee1" (single word)
@@ -218,6 +220,93 @@ def _clear_conversation_state(db, employee_id: int):
     _set_conversation_state(db, employee_id, "idle")
 
 
+def _resolve_project_id(db, project_name: str):
+    """Resolve a project name to a project_id using exact then fuzzy match."""
+    from thefuzz import fuzz
+
+    # Exact match first
+    row = db.execute(
+        "SELECT id FROM projects WHERE LOWER(name) = LOWER(?) AND status = 'active'",
+        (project_name.strip(),),
+    ).fetchone()
+    if row:
+        return row["id"]
+
+    # Fuzzy match against active projects
+    projects = db.execute("SELECT id, name FROM projects WHERE status = 'active'").fetchall()
+    best_id, best_score = None, 0
+    for p in projects:
+        score = fuzz.ratio(project_name.strip().lower(), p["name"].lower())
+        if score > best_score:
+            best_score = score
+            best_id = p["id"]
+
+    if best_score >= 70:
+        return best_id
+    return None
+
+
+def _resolve_category_id(db, category_name: str):
+    """Resolve a category name (from OCR) to a category_id. Falls back to 'Other'."""
+    if not category_name:
+        return None
+    row = db.execute(
+        "SELECT id FROM categories WHERE LOWER(name) = LOWER(?) AND is_active = 1",
+        (category_name.strip(),),
+    ).fetchone()
+    if row:
+        return row["id"]
+    # Fuzzy fallback — check if the name is close to any category
+    from thefuzz import fuzz
+    cats = db.execute("SELECT id, name FROM categories WHERE is_active = 1").fetchall()
+    best_id, best_score = None, 0
+    for c in cats:
+        score = fuzz.ratio(category_name.strip().lower(), c["name"].lower())
+        if score > best_score:
+            best_score = score
+            best_id = c["id"]
+    if best_score >= 60:
+        return best_id
+    # Default to "Other"
+    other = db.execute("SELECT id FROM categories WHERE name = 'Other'").fetchone()
+    return other["id"] if other else None
+
+
+def _categorize_by_vendor(db, vendor_name: str):
+    """Fallback: guess category from vendor name when OCR doesn't suggest one."""
+    if not vendor_name:
+        return None
+    lower = vendor_name.lower()
+    # Vendor-to-category mapping per spec
+    fuel_vendors = ["gas", "fuel", "shell", "chevron", "bp", "exxon", "mobil", "circle k",
+                    "wawa", "racetrac", "speedway", "sunoco", "murphy", "qt", "quiktrip",
+                    "lake wales", "citgo", "valero", "marathon"]
+    material_vendors = ["home depot", "lowe", "menard", "ace hardware", "84 lumber",
+                        "abc supply", "beacon", "srs", "build"]
+    food_vendors = ["mcdonald", "burger", "subway", "wendy", "chick-fil", "taco bell",
+                    "pizza", "restaurant", "diner", "cafe", "publix", "walmart",
+                    "dollar general", "dollar tree", "convenience", "smoke shop"]
+    safety_vendors = ["safety", "grainger", "fastenal"]
+    lodging_vendors = ["hotel", "motel", "inn", "suites", "lodge", "airbnb", "extended stay"]
+
+    for kw in fuel_vendors:
+        if kw in lower:
+            return db.execute("SELECT id FROM categories WHERE name = 'Fuel'").fetchone()["id"]
+    for kw in material_vendors:
+        if kw in lower:
+            return db.execute("SELECT id FROM categories WHERE name = 'Materials'").fetchone()["id"]
+    for kw in food_vendors:
+        if kw in lower:
+            return db.execute("SELECT id FROM categories WHERE name = 'Food & Drinks'").fetchone()["id"]
+    for kw in safety_vendors:
+        if kw in lower:
+            return db.execute("SELECT id FROM categories WHERE name = 'Safety Gear'").fetchone()["id"]
+    for kw in lodging_vendors:
+        if kw in lower:
+            return db.execute("SELECT id FROM categories WHERE name = 'Lodging'").fetchone()["id"]
+    return None
+
+
 # ── Receipt submission (photo received) ─────────────────────
 
 
@@ -260,12 +349,23 @@ def _handle_receipt_submission(db, employee_id: int, first_name: str, body: str,
 
     # Create the receipt record with OCR data
     project_name = body if body else None
+
+    # Resolve project name to project_id via fuzzy match
+    project_id = None
+    if project_name:
+        project_id = _resolve_project_id(db, project_name)
+
+    # Resolve category: OCR suggestion first, then vendor-based fallback
+    category_id = _resolve_category_id(db, ocr_data.get("category"))
+    if not category_id:
+        category_id = _categorize_by_vendor(db, ocr_data.get("vendor_name"))
+
     cursor = db.execute(
         """INSERT INTO receipts
            (employee_id, image_path, vendor_name, vendor_city, vendor_state,
             purchase_date, subtotal, tax, total, payment_method,
-            matched_project_name, raw_ocr_json, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+            project_id, matched_project_name, category_id, raw_ocr_json, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
         (
             employee_id,
             image_path,
@@ -277,7 +377,9 @@ def _handle_receipt_submission(db, employee_id: int, first_name: str, body: str,
             ocr_data.get("tax"),
             ocr_data.get("total"),
             ocr_data.get("payment_method"),
+            project_id,
             project_name,
+            category_id,
             json.dumps(ocr_data),
         ),
     )
@@ -306,11 +408,14 @@ def _handle_receipt_submission(db, employee_id: int, first_name: str, body: str,
         len(ocr_data.get("line_items", [])),
     )
 
-    # Set conversation state to awaiting confirmation
-    _set_conversation_state(db, employee_id, "awaiting_confirmation", receipt_id)
+    # Auto-confirm: set conversation to idle (A2P 10DLC pending — no outbound SMS)
+    _set_conversation_state(db, employee_id, "idle", receipt_id)
 
-    # Format the confirmation message from OCR data
-    return format_confirmation_message(ocr_data, first_name, project_name)
+    # Simple acknowledgment (no confirmation prompt)
+    vendor = ocr_data.get("vendor_name", "unknown vendor")
+    total = ocr_data.get("total")
+    total_str = f"${total:.2f}" if total else ""
+    return f"Got it, {first_name}! Receipt{' for ' + total_str if total_str else ''} at {vendor} has been logged."
 
 
 # ── Confirmation flow (YES/NO replies) ──────────────────────
@@ -427,7 +532,7 @@ def _handle_missed_receipt(db, employee_id: int, first_name: str, body: str) -> 
         "- Approximate amount\n"
         "- What you bought\n"
         "- Project name\n\n"
-        "Example: Home Depot, about $45, roofing nails and caulk, Project Sample Project"
+        "Example: Home Depot, about $45, roofing nails and caulk, Project Alpha"
     )
 
 

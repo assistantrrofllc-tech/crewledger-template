@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% set active_page = "home" %}
 {% block title %}CrewLedger — Dashboard{% endblock %}
 
 {% block content %}
@@ -91,4 +90,8 @@
         {% endfor %}
     </div>
 </section>
+{% endblock %}
+
+{% block pre_scripts %}
+<script>var CAN_EDIT = {{ can_edit | tojson }};</script>
 {% endblock %}

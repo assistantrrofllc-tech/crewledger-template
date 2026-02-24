@@ -1,6 +1,6 @@
 # CREWLEDGER — Phase 2 Build Instructions
 
-**Claude Desktop Instruction File | Feb 2026 | Client Admin**
+**Claude Desktop Instruction File | Feb 2026 | Admin User**
 
 > Read this entire document before touching any files. Phase 1 is complete and live on the Hostinger VPS. You are building Phase 2 additions on top of a working system. Do not rebuild anything that already works.
 
@@ -162,7 +162,7 @@ A banking-style transaction ledger. This is Accountant's primary working view. I
 | Date | Feb 18, 2026 | |
 | Employee | Employee1 | |
 | Vendor | Ace Home & Supply | |
-| Project | Sample Project | |
+| Project | Sparrow | |
 | Category | Materials | Color coded badge |
 | Amount | $100.64 | Bold |
 | Status | Confirmed | Green/yellow/red badge |
@@ -199,7 +199,7 @@ A banking-style transaction ledger. This is Accountant's primary working view. I
 | Google Sheets CSV | Export to Google Sheets | CSV formatted for Google Sheets import |
 | QuickBooks CSV | Export to QuickBooks | Formatted to QuickBooks expense import spec |
 
-> All exports apply the current filters — if Accountant is viewing Project Sample Project for this month, the export contains exactly that data.
+> All exports apply the current filters — if Accountant is viewing Project Alpha for this month, the export contains exactly that data.
 
 ---
 
@@ -282,4 +282,4 @@ After completing each feature, deploy to the live server using the update script
 
 ---
 
-*CrewLedger Phase 2 Instructions | Feb 2026 | Client Admin | Your Company LLC*
+*CrewLedger Phase 2 Instructions | Feb 2026 | Admin User | Tech Quest LLC*

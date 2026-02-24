@@ -164,7 +164,7 @@ def _query_receipts(
         # Project name — prefer the projects table, fall back to matched_project_name
         proj = r["project_name"] or r["matched_project_name"] or ""
 
-        # Memo: "Project Sample Project — Employee1"
+        # Memo: "Project Alpha — Employee1"
         memo_parts = []
         if proj:
             memo_parts.append(proj)

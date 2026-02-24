@@ -39,17 +39,17 @@ def setup_test_db():
 
     # Employees
     db.execute("INSERT INTO employees (id, phone_number, first_name) VALUES (1, '+14075551111', 'Employee1')")
-    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (2, '+14075552222', 'Employee2', 'Employee Two')")
+    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (2, '+14075552222', 'Employee2', 'Employee2 Last2')")
 
     # Projects
     db.execute("INSERT INTO projects (id, name) VALUES (1, 'Sample Project')")
     db.execute("INSERT INTO projects (id, name) VALUES (2, 'Demo Project')")
 
-    # Categories (already seeded by schema, but grab IDs)
-    # Schema seeds: Roofing Materials(1), Tools & Equipment(2), Fasteners & Hardware(3),
-    #               Safety & PPE(4), Fuel & Propane(5), Office & Misc(6), Consumables(7)
+    # Categories (seeded by schema, IDs by insertion order):
+    # 1=Materials, 2=Fuel, 3=Food & Drinks, 4=Tools & Equipment,
+    # 5=Safety Gear, 6=Office & Admin, 7=Lodging, 8=Other
 
-    # Receipt 1: Employee1, confirmed, full data, Project Sample Project
+    # Receipt 1: Employee1, confirmed, full data, Project Alpha
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
@@ -58,7 +58,7 @@ def setup_test_db():
                 94.57, 6.07, 100.64, 'Mastercard ending 7718', 'confirmed', 1, 'Sample Project',
                 '2026-02-09 10:30:00')""")
 
-    # Receipt 2: Employee1, confirmed, Project Sample Project
+    # Receipt 2: Employee1, confirmed, Project Alpha
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
@@ -74,7 +74,7 @@ def setup_test_db():
         VALUES (3, 1, 'QuikTrip', '2026-02-10', 35.00, 'flagged',
                 'Employee rejected OCR read', '2026-02-10 16:00:00')""")
 
-    # Receipt 4: Employee2, confirmed, Project Demo Project
+    # Receipt 4: Employee2, confirmed, Project Beta
     db.execute("""INSERT INTO receipts
         (id, employee_id, vendor_name, vendor_city, vendor_state, purchase_date,
          subtotal, tax, total, payment_method, status, project_id, matched_project_name,
@@ -99,18 +99,18 @@ def setup_test_db():
         VALUES (6, 1, 'Walmart', '2026-02-20',
                 15.00, 1.05, 16.05, 'confirmed', '2026-02-20 08:00:00')""")
 
-    # Line items for receipt #1 (Ace)
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (1, 'Utility Lighter', 1, 7.59, 7.59, 5)")
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (1, 'Propane Exchange', 1, 27.99, 27.99, 5)")
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (1, '20lb Propane Cylinder', 1, 59.99, 59.99, 5)")
+    # Line items for receipt #1 (Ace) — Fuel (id=2)
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (1, 'Utility Lighter', 1, 7.59, 7.59, 2)")
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (1, 'Propane Exchange', 1, 27.99, 27.99, 2)")
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (1, '20lb Propane Cylinder', 1, 59.99, 59.99, 2)")
 
-    # Line items for receipt #2 (Home Depot)
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (2, 'Roofing Nails 1lb', 2, 8.99, 17.98, 3)")
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (2, 'Caulk Gun', 1, 12.49, 12.49, 2)")
+    # Line items for receipt #2 (Home Depot) — Materials (id=1) and Tools & Equipment (id=4)
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (2, 'Roofing Nails 1lb', 2, 8.99, 17.98, 1)")
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (2, 'Caulk Gun', 1, 12.49, 12.49, 4)")
 
-    # Line items for receipt #4 (Lowe's)
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (4, 'Safety Harness', 1, 45.99, 45.99, 4)")
-    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (4, 'Hard Hat', 1, 21.90, 21.90, 4)")
+    # Line items for receipt #4 (Lowe's) — Safety Gear (id=5)
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (4, 'Safety Harness', 1, 45.99, 45.99, 5)")
+    db.execute("INSERT INTO line_items (receipt_id, item_name, quantity, unit_price, extended_price, category_id) VALUES (4, 'Hard Hat', 1, 21.90, 21.90, 5)")
 
     # Receipt #5 has no line items (pending, not yet processed)
 
@@ -211,14 +211,14 @@ def test_export_memo_format():
     resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15")
     rows = parse_csv_response(resp)
 
-    # Receipt 1: Employee1 (no full_name) on Project Sample Project
+    # Receipt 1: Employee1 (no full_name) on Project Alpha
     assert "Sample Project" in rows[0]["Memo"]
     assert "Employee1" in rows[0]["Memo"]
 
-    # Receipt 4: Employee Two (has full_name) on Project Demo Project
-    emp2_row = next(r for r in rows if "Employee Two" in r["Memo"])
-    assert "Demo Project" in emp2_row["Memo"]
-    assert "Employee Two" in emp2_row["Memo"]
+    # Receipt 4: Employee2 Last2 (has full_name) on Project Beta
+    mario_row = next(r for r in rows if "Employee2" in r["Memo"])
+    assert "Demo Project" in mario_row["Memo"]
+    assert "Employee2 Last2" in mario_row["Memo"]
     print("  PASS: memo formatted correctly")
 
 
@@ -245,11 +245,11 @@ def test_export_category_account():
     resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15")
     rows = parse_csv_response(resp)
 
-    # Receipt 1: all items are Fuel & Propane (category_id=5)
-    assert rows[0]["Account"] == "Fuel & Propane"
+    # Receipt 1: all items are Fuel (category_id=2)
+    assert rows[0]["Account"] == "Fuel"
 
-    # Receipt 2: first item is Fasteners & Hardware (category_id=3)
-    assert rows[1]["Account"] == "Fasteners & Hardware"
+    # Receipt 2: first item is Materials (category_id=1)
+    assert rows[1]["Account"] == "Materials"
     print("  PASS: Account column maps to category")
 
 
@@ -264,7 +264,7 @@ def test_export_filter_by_employee():
     rows = parse_csv_response(resp)
 
     assert len(rows) == 1
-    assert "Employee Two" in rows[0]["Memo"]
+    assert "Employee2" in rows[0]["Memo"]
     print("  PASS: employee_id filter works")
 
 
@@ -284,7 +284,7 @@ def test_export_filter_by_category():
     """category filter returns only receipts with matching line item categories."""
     setup_test_db()
     client = get_test_client()
-    resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15&category=Safety+%26+PPE")
+    resp = client.get("/export/quickbooks?week_start=2026-02-09&week_end=2026-02-15&category=Safety+Gear")
     rows = parse_csv_response(resp)
 
     assert len(rows) == 1

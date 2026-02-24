@@ -18,7 +18,14 @@ CREATE TABLE IF NOT EXISTS employees (
     full_name       TEXT,
     role            TEXT,
     crew            TEXT,
+    email           TEXT,
     photo           TEXT,
+    nickname        TEXT,
+    is_driver       INTEGER DEFAULT 0,
+    public_token    TEXT    UNIQUE,
+    notes           TEXT,
+    system_role     TEXT    DEFAULT 'employee'
+                           CHECK(system_role IN ('super_admin', 'company_admin', 'manager', 'employee')),
     is_active       INTEGER DEFAULT 1,
     created_at      TEXT    DEFAULT (datetime('now')),
     updated_at      TEXT    DEFAULT (datetime('now'))
@@ -57,18 +64,21 @@ CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 CREATE TABLE IF NOT EXISTS categories (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT    UNIQUE NOT NULL,
-    description     TEXT
+    description     TEXT,
+    is_active       INTEGER DEFAULT 1,
+    sort_order      INTEGER DEFAULT 0
 );
 
--- Seed default categories from the spec
-INSERT OR IGNORE INTO categories (name, description) VALUES
-    ('Roofing Materials',    'Shingles, underlayment, flashing, ridge caps, drip edge'),
-    ('Tools & Equipment',    'Power tools, hand tools, ladders, equipment rentals'),
-    ('Fasteners & Hardware', 'Nails, screws, bolts, anchors, brackets'),
-    ('Safety & PPE',         'Hard hats, gloves, harnesses, safety glasses, vests'),
-    ('Fuel & Propane',       'Gas, diesel, propane tanks, propane exchanges'),
-    ('Office & Misc',        'Office supplies, permits, printing, miscellaneous'),
-    ('Consumables',          'Rags, water, tape, caulk, adhesives, disposables');
+-- Seed default categories (8 per spec, sort_order = dropdown order)
+INSERT OR IGNORE INTO categories (name, description, sort_order) VALUES
+    ('Materials',        'Lumber, concrete, roofing materials, fasteners, adhesives', 1),
+    ('Fuel',             'Gas stations, diesel, fuel for equipment',                  2),
+    ('Food & Drinks',    'Crew meals, drinks, snacks on the job',                    3),
+    ('Tools & Equipment','Hand tools, power tools, equipment purchases',             4),
+    ('Safety Gear',      'Vests, helmets, harnesses, gloves, eyewear',               5),
+    ('Office & Admin',   'Printing, office supplies, postage, permits',              6),
+    ('Lodging',          'Hotels, extended stay for out of town jobs',                7),
+    ('Other',            'Anything that does not fit the above',                      8);
 
 -- ============================================================
 -- RECEIPTS
@@ -96,12 +106,14 @@ CREATE TABLE IF NOT EXISTS receipts (
     is_missed_receipt     INTEGER DEFAULT 0,
     matched_project_name  TEXT,
     fuzzy_match_score     REAL,
+    category_id           INTEGER,
     notes                 TEXT,
     raw_ocr_json          TEXT,
     created_at            TEXT    DEFAULT (datetime('now')),
     confirmed_at          TEXT,
     FOREIGN KEY (employee_id) REFERENCES employees(id),
-    FOREIGN KEY (project_id)  REFERENCES projects(id)
+    FOREIGN KEY (project_id)  REFERENCES projects(id),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_receipts_employee    ON receipts(employee_id);
@@ -197,6 +209,59 @@ INSERT OR IGNORE INTO email_settings (key, value) VALUES
     ('enabled', '1');
 
 -- ============================================================
+-- CERTIFICATION TYPES
+-- Lookup table for certification/credential types tracked
+-- per employee in the CrewCert module.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS certification_types (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    UNIQUE NOT NULL,
+    slug            TEXT    UNIQUE NOT NULL,
+    sort_order      INTEGER DEFAULT 0,
+    is_active       INTEGER DEFAULT 1
+);
+
+INSERT OR IGNORE INTO certification_types (name, slug, sort_order) VALUES
+    ('OSHA 10',                'osha-10',           1),
+    ('OSHA 30',                'osha-30',           2),
+    ('First Aid / CPR',        'first-aid-cpr',     3),
+    ('Fall Protection',        'fall-protection',   4),
+    ('Extended Reach Forklift','ext-reach-forklift', 5),
+    ('Aerial Work Platform',   'aerial-work-platform', 6),
+    ('Driver',                 'driver',            7),
+    ('Bilingual',              'bilingual',         8),
+    ('Crew Lead',              'crew-lead',         9),
+    ('Card Holder',            'card-holder',       10),
+    ('Basic Rigging',          'basic-rigging',     11),
+    ('Rigger/Signal Person',   'rigger-signal-person', 12);
+
+-- ============================================================
+-- CERTIFICATIONS
+-- Links employees to certification types with issue/expiry dates.
+-- Document path points to stored cert image/PDF.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS certifications (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id     INTEGER NOT NULL,
+    cert_type_id    INTEGER NOT NULL,
+    issued_at       TEXT,
+    expires_at      TEXT,
+    document_path   TEXT,
+    issuing_org     TEXT,
+    notes           TEXT,
+    is_active       INTEGER DEFAULT 1,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    updated_at      TEXT    DEFAULT (datetime('now')),
+    FOREIGN KEY (employee_id)  REFERENCES employees(id),
+    FOREIGN KEY (cert_type_id) REFERENCES certification_types(id),
+    UNIQUE(employee_id, cert_type_id, issued_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_certs_employee ON certifications(employee_id);
+CREATE INDEX IF NOT EXISTS idx_certs_type     ON certifications(cert_type_id);
+CREATE INDEX IF NOT EXISTS idx_certs_expires  ON certifications(expires_at);
+
+-- ============================================================
 -- RECEIPT EDITS (Audit Trail)
 -- Logs every field change made to a receipt after initial OCR.
 -- Preserves accountability and original OCR data integrity.
@@ -214,3 +279,104 @@ CREATE TABLE IF NOT EXISTS receipt_edits (
 
 CREATE INDEX IF NOT EXISTS idx_receipt_edits_receipt ON receipt_edits(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_receipt_edits_date ON receipt_edits(edited_at);
+
+-- ============================================================
+-- COMMUNICATIONS (CrewComms)
+-- Cross-channel communication log: SMS, email, calls.
+-- Invisible foundation — no UI triggers this table yet.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS communications (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction       TEXT    NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+    channel         TEXT    NOT NULL CHECK(channel IN ('sms', 'email', 'call')),
+    from_number     TEXT,
+    to_number       TEXT,
+    body            TEXT,
+    duration_seconds INTEGER,
+    recording_url   TEXT,
+    transcript      TEXT,
+    project_id      INTEGER,
+    contact_id      INTEGER,
+    employee_id     INTEGER,
+    external_id     TEXT    UNIQUE,
+    imported_at     TEXT,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id)  REFERENCES projects(id),
+    FOREIGN KEY (employee_id) REFERENCES employees(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comms_direction  ON communications(direction);
+CREATE INDEX IF NOT EXISTS idx_comms_channel    ON communications(channel);
+CREATE INDEX IF NOT EXISTS idx_comms_from       ON communications(from_number);
+CREATE INDEX IF NOT EXISTS idx_comms_to         ON communications(to_number);
+CREATE INDEX IF NOT EXISTS idx_comms_employee   ON communications(employee_id);
+CREATE INDEX IF NOT EXISTS idx_comms_external   ON communications(external_id);
+CREATE INDEX IF NOT EXISTS idx_comms_created    ON communications(created_at);
+
+-- ============================================================
+-- USER PERMISSIONS
+-- Module-level access control. Each row grants a user an access
+-- level for one module. Access levels: none, view, edit, admin.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_permissions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    module          TEXT    NOT NULL
+                           CHECK(module IN ('crewledger', 'crewcert', 'crewschedule',
+                                           'crewasset', 'crewinventory', 'crewcomms', 'crewgroup')),
+    access_level    TEXT    NOT NULL DEFAULT 'none'
+                           CHECK(access_level IN ('none', 'view', 'edit', 'admin')),
+    granted_by      INTEGER,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    updated_at      TEXT    DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id)    REFERENCES employees(id),
+    FOREIGN KEY (granted_by) REFERENCES employees(id),
+    UNIQUE(user_id, module)
+);
+
+CREATE INDEX IF NOT EXISTS idx_perms_user   ON user_permissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_perms_module ON user_permissions(module);
+
+-- ============================================================
+-- QR SCAN LOG
+-- Logs each scan of an employee's public QR code.
+-- Used for audit trail — who verified, when.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS qr_scan_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id     INTEGER NOT NULL,
+    ip_address      TEXT,
+    user_agent      TEXT,
+    scanned_at      TEXT    DEFAULT (datetime('now')),
+    FOREIGN KEY (employee_id) REFERENCES employees(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qr_scans_employee ON qr_scan_log(employee_id);
+CREATE INDEX IF NOT EXISTS idx_qr_scans_time     ON qr_scan_log(scanned_at);
+
+-- ============================================================
+-- CERT ALERTS
+-- Status change events for certifications. Powers dashboard
+-- alerts, future notifications. Created by daily refresh job.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cert_alerts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id     INTEGER NOT NULL,
+    cert_id         INTEGER NOT NULL,
+    alert_type      TEXT    NOT NULL
+                           CHECK(alert_type IN ('expired', 'expiring', 'renewed')),
+    previous_status TEXT,
+    new_status      TEXT,
+    days_until_expiry INTEGER,
+    acknowledged    INTEGER DEFAULT 0,
+    acknowledged_by TEXT,
+    acknowledged_at TEXT,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    FOREIGN KEY (employee_id) REFERENCES employees(id),
+    FOREIGN KEY (cert_id)     REFERENCES certifications(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cert_alerts_employee ON cert_alerts(employee_id);
+CREATE INDEX IF NOT EXISTS idx_cert_alerts_type     ON cert_alerts(alert_type);
+CREATE INDEX IF NOT EXISTS idx_cert_alerts_ack      ON cert_alerts(acknowledged);
+CREATE INDEX IF NOT EXISTS idx_cert_alerts_created  ON cert_alerts(created_at);

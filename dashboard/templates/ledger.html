@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% set active_page = "ledger" %}
 {% block title %}CrewLedger — Ledger{% endblock %}
 
 {% block content %}
@@ -89,6 +88,7 @@
                 <th>Employee</th>
                 <th>Vendor</th>
                 <th>Project</th>
+                <th>Category</th>
                 <th>Amount</th>
                 <th>Status</th>
                 <th>Notes</th>
@@ -96,7 +96,7 @@
             </tr>
         </thead>
         <tbody id="ledger-body">
-            <tr><td colspan="8" class="loading">Loading...</td></tr>
+            <tr><td colspan="9" class="loading">Loading...</td></tr>
         </tbody>
     </table>
 </div>
@@ -118,12 +118,16 @@
     </div>
     <table class="print-table" id="print-table">
         <thead>
-            <tr><th>Date</th><th>Employee</th><th>Vendor</th><th>Project</th><th>Amount</th><th>Status</th><th>Notes</th></tr>
+            <tr><th>Date</th><th>Employee</th><th>Vendor</th><th>Project</th><th>Category</th><th>Amount</th><th>Status</th><th>Notes</th></tr>
         </thead>
         <tbody id="print-body"></tbody>
         <tfoot id="print-foot"></tfoot>
     </table>
 </div>
+{% endblock %}
+
+{% block pre_scripts %}
+<script>var CAN_EDIT = {{ can_edit | tojson }};</script>
 {% endblock %}
 
 {% block scripts %}
@@ -182,6 +186,7 @@ function loadLedger() {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             currentData = data;
+            _receiptNavList = data.map(function(r) { return r.id; });
             renderLedger(data);
             updateTotals(data);
         });
@@ -190,7 +195,7 @@ function loadLedger() {
 function renderLedger(data) {
     var body = document.getElementById('ledger-body');
     if (data.length === 0) {
-        body.innerHTML = '<tr><td colspan="8" class="loading">No transactions found</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" class="loading">No transactions found</td></tr>';
         return;
     }
     var html = '';
@@ -201,16 +206,23 @@ function renderLedger(data) {
         html += '<td>' + escapeHtml(r.employee_name || '?') + '</td>';
         html += '<td>' + escapeHtml(r.vendor_name || 'Unknown') + '</td>';
         html += '<td>' + escapeHtml(r.project_name || r.matched_project_name || '—') + '</td>';
+        html += '<td><span class="badge badge--cat">' + escapeHtml(r.category || '—') + '</span></td>';
         html += '<td class="cell-amount">' + formatMoney(r.total) + '</td>';
-        html += '<td><span class="badge badge--' + (r.status || '') + ' badge-action" onclick="event.stopPropagation(); openStatusPopover(' + r.id + ', this)">' + (r.status || '') + '</span></td>';
+        if (CAN_EDIT) {
+            html += '<td><span class="badge badge--' + (r.status || '') + ' badge-action" onclick="event.stopPropagation(); openStatusPopover(' + r.id + ', this)">' + (r.status || '') + '</span></td>';
+        } else {
+            html += '<td><span class="badge badge--' + (r.status || '') + '">' + (r.status || '') + '</span></td>';
+        }
         html += '<td class="cell-notes">' + escapeHtml(r.notes || '') + '</td>';
         html += '<td class="cell-actions">';
-        html += '<button class="row-action-btn row-action-btn--edit" onclick="event.stopPropagation(); quickEditReceipt(' + r.id + ')" title="Quick edit">';
-        html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
-        html += '</button>';
-        html += '<button class="row-action-btn row-action-btn--delete" onclick="event.stopPropagation(); deleteReceipt(' + r.id + ')" title="Delete">';
-        html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
-        html += '</button>';
+        if (CAN_EDIT) {
+            html += '<button class="row-action-btn row-action-btn--edit" onclick="event.stopPropagation(); quickEditReceipt(' + r.id + ')" title="Quick edit">';
+            html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
+            html += '</button>';
+            html += '<button class="row-action-btn row-action-btn--delete" onclick="event.stopPropagation(); deleteReceipt(' + r.id + ')" title="Delete">';
+            html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+            html += '</button>';
+        }
         html += '</td>';
         html += '</tr>';
     }

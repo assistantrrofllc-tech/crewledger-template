@@ -127,7 +127,7 @@ def render_report_html(report: dict) -> str:
 
     <!-- Footer -->
     <div style="text-align:center;padding:16px;color:#9CA3AF;font-size:12px;">
-        CrewLedger — Roofing &amp; Renovations of Florida LLC<br>
+        CrewLedger — Client Company LLC<br>
         Generated {datetime.now().strftime('%m/%d/%Y at %I:%M %p')}
     </div>
 

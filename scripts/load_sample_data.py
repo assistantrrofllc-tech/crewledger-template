@@ -2,7 +2,7 @@
 Load sample data into CrewLedger — two real receipts for demo purposes.
 
 Creates:
-- "Rob" employee (Client Admin)
+- "SampleUser" employee (Sample User)
 - "Sample Project" project (if not exists)
 - Bays Smoke Shop receipt ($67.08) with placeholder image
 - Home Depot receipt ($94.81) with placeholder image
@@ -77,31 +77,31 @@ def load_sample_data():
         # Ensure schema is up to date
         db.executescript(schema_path.read_text())
 
-        # ── Employee: Rob ─────────────────────────────────────
-        existing = db.execute("SELECT id FROM employees WHERE first_name = 'Rob'").fetchone()
+        # ── Employee: SampleUser ─────────────────────────────────────
+        existing = db.execute("SELECT id FROM employees WHERE first_name = 'SampleUser'").fetchone()
         if existing:
             rob_id = existing["id"]
-            print(f"  Rob already exists (id={rob_id})")
+            print(f"  SampleUser already exists (id={rob_id})")
         else:
             db.execute(
                 "INSERT INTO employees (phone_number, first_name, full_name, role, crew) VALUES (?, ?, ?, ?, ?)",
-                ("+10000000001", "Employee1", "Sample Employee One", "Field", "Alpha"),
+                ("+14075550001", "SampleUser", "Sample User", "PM", "Alpha"),
             )
-            rob_id = db.execute("SELECT id FROM employees WHERE first_name = 'Rob'").fetchone()["id"]
-            print(f"  Created employee: Rob (id={rob_id})")
+            rob_id = db.execute("SELECT id FROM employees WHERE first_name = 'SampleUser'").fetchone()["id"]
+            print(f"  Created employee: SampleUser (id={rob_id})")
 
         # ── Project: Sample Project ──────────────────────────────────
         existing = db.execute("SELECT id FROM projects WHERE name = 'Sample Project'").fetchone()
         if existing:
-            sparrow_id = existing["id"]
-            print(f"  Sample Project project already exists (id={sparrow_id})")
+            sample_project_id = existing["id"]
+            print(f"  Sample Project already exists (id={sample_project_id})")
         else:
             db.execute(
                 "INSERT INTO projects (name, city, state, status) VALUES (?, ?, ?, ?)",
                 ("Sample Project", "Anytown", "FL", "active"),
             )
-            sparrow_id = db.execute("SELECT id FROM projects WHERE name = 'Sample Project'").fetchone()["id"]
-            print(f"  Created project: Sample Project (id={sparrow_id})")
+            sample_project_id = db.execute("SELECT id FROM projects WHERE name = 'Sample Project'").fetchone()["id"]
+            print(f"  Created project: Sample Project (id={sample_project_id})")
 
         # ── Receipt 1: Bays Smoke Shop — $67.08 ──────────────
         img1_name = "rob_20260220_161500.jpg"
@@ -140,7 +140,7 @@ def load_sample_data():
                      notes, created_at, confirmed_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    rob_id, sparrow_id,
+                    rob_id, sample_project_id,
                     "Bays Smoke Shop", "Anytown", "FL",
                     "2026-02-20", 62.13, 4.95, 67.08, "VISA 4821",
                     img1_path, "confirmed", "Sample Project",
@@ -193,7 +193,7 @@ def load_sample_data():
                      notes, created_at, confirmed_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    rob_id, sparrow_id,
+                    rob_id, sample_project_id,
                     "Home Depot", "Anytown", "FL",
                     "2026-02-20", 87.94, 6.87, 94.81, "VISA 4821",
                     img2_path, "confirmed", "Sample Project",

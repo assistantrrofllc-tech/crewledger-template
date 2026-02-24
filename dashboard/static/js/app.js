@@ -1,10 +1,14 @@
 /* CrewLedger Dashboard — Core JavaScript */
 
+// ── Permissions (overridden by page-level scripts when available) ───
+if (typeof CAN_EDIT === 'undefined') var CAN_EDIT = true;
+
 // ── Receipt Image Modal ─────────────────────────────────
 
 var _currentReceiptId = null;
 var _currentReceiptData = null;
 var _autoEditOnLoad = false;
+var _receiptNavList = null;
 
 function openReceiptModal(receiptId) {
     var modal = document.getElementById('receipt-modal');
@@ -83,16 +87,23 @@ function openReceiptModal(receiptId) {
             // Footer with edit/history/delete buttons
             if (footer) {
                 var isHidden = (data.status === 'deleted' || data.status === 'duplicate');
-                var btns = '<button class="btn btn--small btn--secondary" onclick="toggleEditForm(' + receiptId + ')">Edit Receipt</button>'
-                    + ' <button class="btn btn--small btn--secondary" onclick="showEditHistory(' + receiptId + ')">Edit History</button>';
-                if (isHidden) {
-                    btns += ' <button class="btn btn--small btn--success" onclick="restoreReceipt(' + receiptId + ')">Restore</button>';
-                } else {
-                    btns += ' <button class="btn btn--small btn--secondary" onclick="markDuplicate(' + receiptId + ')">Mark Duplicate</button>';
-                    btns += ' <button class="btn btn--small btn--danger" onclick="deleteReceipt(' + receiptId + ')">Delete</button>';
+                var btns = ' <button class="btn btn--small btn--secondary" onclick="showEditHistory(' + receiptId + ')">Edit History</button>';
+                if (CAN_EDIT) {
+                    btns = '<button class="btn btn--small btn--secondary" onclick="toggleEditForm(' + receiptId + ')">Edit Receipt</button>' + btns;
+                    if (isHidden) {
+                        btns += ' <button class="btn btn--small btn--success" onclick="restoreReceipt(' + receiptId + ')">Restore</button>';
+                    } else {
+                        if (data.status === 'pending' || data.status === 'flagged') {
+                            btns += ' <button class="btn btn--small btn--success" onclick="confirmReceipt(' + receiptId + ')">Confirm</button>';
+                        }
+                        btns += ' <button class="btn btn--small btn--secondary" onclick="markDuplicate(' + receiptId + ')">Mark Duplicate</button>';
+                        btns += ' <button class="btn btn--small btn--danger" onclick="deleteReceipt(' + receiptId + ')">Delete</button>';
+                    }
                 }
                 footer.innerHTML = btns;
             }
+
+            _updateNavButtons();
         })
         .catch(function(err) {
             details.innerHTML = '<div class="loading">Failed to load receipt details.</div>';
@@ -105,12 +116,85 @@ function closeReceiptModal() {
     document.body.style.overflow = '';
     _currentReceiptId = null;
     _currentReceiptData = null;
+    var prevBtn = document.getElementById('modal-nav-prev');
+    var nextBtn = document.getElementById('modal-nav-next');
+    if (prevBtn) prevBtn.style.display = 'none';
+    if (nextBtn) nextBtn.style.display = 'none';
 }
 
-// Close modal on Escape key
+// ── Receipt Navigation ───────────────────────────────────
+
+function _updateNavButtons() {
+    var prevBtn = document.getElementById('modal-nav-prev');
+    var nextBtn = document.getElementById('modal-nav-next');
+    if (!prevBtn || !nextBtn) return;
+
+    if (!_receiptNavList || _receiptNavList.length < 2 || _currentReceiptId === null) {
+        prevBtn.style.display = 'none';
+        nextBtn.style.display = 'none';
+        return;
+    }
+
+    var idx = _receiptNavList.indexOf(_currentReceiptId);
+    if (idx === -1) {
+        prevBtn.style.display = 'none';
+        nextBtn.style.display = 'none';
+        return;
+    }
+
+    prevBtn.style.display = 'flex';
+    nextBtn.style.display = 'flex';
+    prevBtn.disabled = (idx === 0);
+    nextBtn.disabled = (idx === _receiptNavList.length - 1);
+}
+
+function navigateReceipt(direction) {
+    if (!_receiptNavList || _currentReceiptId === null) return;
+    var idx = _receiptNavList.indexOf(_currentReceiptId);
+    if (idx === -1) return;
+    var newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= _receiptNavList.length) return;
+    openReceiptModal(_receiptNavList[newIdx]);
+}
+
+// Close modal on Escape key, navigate with arrows
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeReceiptModal();
+    var modal = document.getElementById('receipt-modal');
+    if (modal && modal.style.display !== 'none') {
+        if (e.key === 'ArrowLeft') { navigateReceipt(-1); e.preventDefault(); }
+        if (e.key === 'ArrowRight') { navigateReceipt(1); e.preventDefault(); }
+    }
 });
+
+// ── Mobile Swipe Navigation ──────────────────────────────
+(function() {
+    var startX, startY, startTime;
+    var modal = document.getElementById('receipt-modal');
+    if (!modal) return;
+
+    modal.addEventListener('touchstart', function(e) {
+        if (e.touches.length !== 1) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        startTime = Date.now();
+    }, { passive: true });
+
+    modal.addEventListener('touchend', function(e) {
+        if (startX === undefined) return;
+        var dx = e.changedTouches[0].clientX - startX;
+        var dy = e.changedTouches[0].clientY - startY;
+        var dt = Date.now() - startTime;
+        startX = undefined;
+
+        if (dt > 500) return;
+        if (Math.abs(dx) < 50) return;
+        if (Math.abs(dy) > 100) return;
+
+        if (dx > 0) navigateReceipt(-1);   // swipe right = previous
+        else navigateReceipt(1);            // swipe left = next
+    }, { passive: true });
+})();
 
 
 // ── Notes ───────────────────────────────────────────────
@@ -139,6 +223,77 @@ function saveNotes(receiptId) {
 
 // ── Receipt Editing ─────────────────────────────────────
 
+var _cachedCategories = null;
+var _cachedEmployees = null;
+var _cachedProjects = null;
+
+function _loadCategories(callback) {
+    if (_cachedCategories) return callback(_cachedCategories);
+    fetch('/api/categories?active=1')
+        .then(function(r) { return r.json(); })
+        .then(function(cats) { _cachedCategories = cats; callback(cats); });
+}
+
+function _loadEmployees(callback) {
+    if (_cachedEmployees) return callback(_cachedEmployees);
+    fetch('/api/employees')
+        .then(function(r) { return r.json(); })
+        .then(function(emps) {
+            _cachedEmployees = emps.filter(function(e) { return e.is_active; });
+            callback(_cachedEmployees);
+        });
+}
+
+function _loadProjects(callback) {
+    if (_cachedProjects) return callback(_cachedProjects);
+    fetch('/api/projects')
+        .then(function(r) { return r.json(); })
+        .then(function(projs) {
+            _cachedProjects = projs.filter(function(p) { return p.status === 'active'; });
+            callback(_cachedProjects);
+        });
+}
+
+function _buildCategorySelect(id, selectedId) {
+    var html = '<select id="' + id + '"><option value="">— Select —</option>';
+    if (_cachedCategories) {
+        for (var i = 0; i < _cachedCategories.length; i++) {
+            var c = _cachedCategories[i];
+            var sel = (c.id == selectedId) ? ' selected' : '';
+            html += '<option value="' + c.id + '"' + sel + '>' + escapeHtml(c.name) + '</option>';
+        }
+    }
+    html += '</select>';
+    return html;
+}
+
+function _buildEmployeeSelect(id, selectedId) {
+    var html = '<select id="' + id + '">';
+    if (_cachedEmployees) {
+        for (var i = 0; i < _cachedEmployees.length; i++) {
+            var e = _cachedEmployees[i];
+            var name = e.full_name || e.first_name;
+            var sel = (e.id == selectedId) ? ' selected' : '';
+            html += '<option value="' + e.id + '"' + sel + '>' + escapeHtml(name) + '</option>';
+        }
+    }
+    html += '</select>';
+    return html;
+}
+
+function _buildProjectSelect(id, selectedId) {
+    var html = '<select id="' + id + '"><option value="">— None —</option>';
+    if (_cachedProjects) {
+        for (var i = 0; i < _cachedProjects.length; i++) {
+            var p = _cachedProjects[i];
+            var sel = (p.id == selectedId) ? ' selected' : '';
+            html += '<option value="' + p.id + '"' + sel + '>' + escapeHtml(p.name) + '</option>';
+        }
+    }
+    html += '</select>';
+    return html;
+}
+
 function toggleEditForm(receiptId) {
     var details = document.getElementById('modal-receipt-details');
     var data = _currentReceiptData;
@@ -150,44 +305,57 @@ function toggleEditForm(receiptId) {
         return;
     }
 
-    var form = document.createElement('div');
-    form.id = 'receipt-edit-form';
-    form.className = 'edit-form';
-    form.innerHTML = '<h4>Edit Receipt</h4>'
-        + '<div class="form-row">'
-        + '<div class="form-group"><label>Vendor</label><input type="text" id="edit-vendor" value="' + escapeAttr(data.vendor_name || '') + '"></div>'
-        + '<div class="form-group"><label>Date</label><input type="date" id="edit-date" value="' + (data.purchase_date || '') + '"></div>'
-        + '</div>'
-        + '<div class="form-row">'
-        + '<div class="form-group"><label>Subtotal</label><input type="number" step="0.01" id="edit-subtotal" value="' + (data.subtotal || '') + '"></div>'
-        + '<div class="form-group"><label>Tax</label><input type="number" step="0.01" id="edit-tax" value="' + (data.tax || '') + '"></div>'
-        + '<div class="form-group"><label>Total</label><input type="number" step="0.01" id="edit-total" value="' + (data.total || '') + '"></div>'
-        + '</div>'
-        + '<div class="form-row">'
-        + '<div class="form-group"><label>Payment Method</label><input type="text" id="edit-payment" value="' + escapeAttr(data.payment_method || '') + '"></div>'
-        + '<div class="form-group"><label>Project</label><input type="text" id="edit-project" value="' + escapeAttr(data.project_name || data.matched_project_name || '') + '"></div>'
-        + '</div>'
-        + '<div style="margin-top:8px;">'
-        + '<button class="btn btn--small btn--primary" onclick="saveReceiptEdit(' + receiptId + ')">Save Changes</button>'
-        + ' <button class="btn btn--small btn--secondary" onclick="document.getElementById(\'receipt-edit-form\').remove()">Cancel</button>'
-        + ' <span id="edit-msg" style="margin-left:8px;font-size:12px;"></span>'
-        + '</div>';
+    _loadCategories(function() {
+        _loadEmployees(function() {
+            _loadProjects(function() {
+                var form = document.createElement('div');
+                form.id = 'receipt-edit-form';
+                form.className = 'edit-form';
+                form.innerHTML = '<h4>Edit Receipt</h4>'
+                    + '<div class="form-row">'
+                    + '<div class="form-group"><label>Submitter</label>' + _buildEmployeeSelect('edit-employee', data.employee_id) + '</div>'
+                    + '<div class="form-group"><label>Vendor</label><input type="text" id="edit-vendor" value="' + escapeAttr(data.vendor_name || '') + '"></div>'
+                    + '<div class="form-group"><label>Date</label><input type="date" id="edit-date" value="' + (data.purchase_date || '') + '"></div>'
+                    + '</div>'
+                    + '<div class="form-row">'
+                    + '<div class="form-group"><label>Subtotal</label><input type="number" step="0.01" id="edit-subtotal" value="' + (data.subtotal || '') + '"></div>'
+                    + '<div class="form-group"><label>Tax</label><input type="number" step="0.01" id="edit-tax" value="' + (data.tax || '') + '"></div>'
+                    + '<div class="form-group"><label>Total</label><input type="number" step="0.01" id="edit-total" value="' + (data.total || '') + '"></div>'
+                    + '</div>'
+                    + '<div class="form-row">'
+                    + '<div class="form-group"><label>Payment Method</label><input type="text" id="edit-payment" value="' + escapeAttr(data.payment_method || '') + '"></div>'
+                    + '<div class="form-group"><label>Project</label>' + _buildProjectSelect('edit-project', data.project_id) + '</div>'
+                    + '<div class="form-group"><label>Category</label>' + _buildCategorySelect('edit-category', data.category_id) + '</div>'
+                    + '</div>'
+                    + '<div style="margin-top:8px;">'
+                    + '<button class="btn btn--small btn--primary" onclick="saveReceiptEdit(' + receiptId + ')">Save Changes</button>'
+                    + ' <button class="btn btn--small btn--secondary" onclick="document.getElementById(\'receipt-edit-form\').remove()">Cancel</button>'
+                    + ' <span id="edit-msg" style="margin-left:8px;font-size:12px;"></span>'
+                    + '</div>';
 
-    details.appendChild(form);
+                details.appendChild(form);
+            });
+        });
+    });
 }
 
 function saveReceiptEdit(receiptId) {
     var msg = document.getElementById('edit-msg');
     msg.innerHTML = '<span style="color:#6b7280;">Saving...</span>';
 
+    var catEl = document.getElementById('edit-category');
+    var empEl = document.getElementById('edit-employee');
+    var projEl = document.getElementById('edit-project');
     var payload = {
+        employee_id: empEl ? parseInt(empEl.value) : null,
         vendor_name: document.getElementById('edit-vendor').value,
         purchase_date: document.getElementById('edit-date').value,
         subtotal: parseFloat(document.getElementById('edit-subtotal').value) || 0,
         tax: parseFloat(document.getElementById('edit-tax').value) || 0,
         total: parseFloat(document.getElementById('edit-total').value) || 0,
         payment_method: document.getElementById('edit-payment').value,
-        matched_project_name: document.getElementById('edit-project').value,
+        project_id: projEl ? (parseInt(projEl.value) || null) : null,
+        category_id: catEl ? (parseInt(catEl.value) || null) : null,
     };
 
     fetch('/api/receipts/' + receiptId + '/edit', {
@@ -243,7 +411,25 @@ function showEditHistory(receiptId) {
 }
 
 
-// ── Delete / Restore / Duplicate ────────────────────────
+// ── Confirm / Delete / Restore / Duplicate ──────────────
+
+function confirmReceipt(receiptId) {
+    fetch('/api/receipts/' + receiptId + '/edit', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status: 'confirmed'}),
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(d) {
+        if (d.status === 'updated') {
+            openReceiptModal(receiptId);
+            if (typeof loadLedger === 'function') loadLedger();
+            else location.reload();
+        } else {
+            alert(d.error || 'Failed to confirm receipt');
+        }
+    });
+}
 
 function deleteReceipt(receiptId) {
     if (!confirm('Are you sure you want to delete this receipt? It can be restored from the Ledger.')) return;

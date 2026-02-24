@@ -39,7 +39,7 @@ def setup_test_db():
     # Employees
     db.execute("INSERT INTO employees (id, phone_number, first_name) VALUES (1, '+14075551111', 'Employee1')")
     db.execute("INSERT INTO employees (id, phone_number, first_name) VALUES (2, '+14075552222', 'Employee2')")
-    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (3, '+14075553333', 'Employee3', 'Employee Three')")
+    db.execute("INSERT INTO employees (id, phone_number, first_name, full_name) VALUES (3, '+14075553333', 'Employee3', 'Employee3 Last3')")
 
     # Projects
     db.execute("INSERT INTO projects (id, name) VALUES (1, 'Sample Project')")
@@ -138,7 +138,7 @@ def test_report_employee_sections():
     assert "Employee2" in names
     assert "Employee1" in names
     # Employee3 has no receipts — should not appear
-    assert "Employee3" not in names and "Employee Three" not in names
+    assert "Employee3" not in names and "Employee3 Last3" not in names
     print("  PASS: only employees with receipts appear (Employee1, Employee2)")
 
 
@@ -149,22 +149,22 @@ def test_omar_section():
     report = get_weekly_report_data(db, "2026-02-09", "2026-02-15")
     db.close()
 
-    emp1 = next(e for e in report["employees"] if e["name"] == "Employee1")
-    assert emp1["receipt_count"] == 3
-    assert emp1["total_spend"] == 181.01  # 100.64 + 45.37 + 35.00
+    omar = next(e for e in report["employees"] if e["name"] == "Employee1")
+    assert omar["receipt_count"] == 3
+    assert omar["total_spend"] == 181.01  # 100.64 + 45.37 + 35.00
 
     # Daily summary
-    assert "2026-02-09" in emp1["daily_summary"]
-    assert emp1["daily_summary"]["2026-02-09"]["count"] == 1
-    assert emp1["daily_summary"]["2026-02-09"]["spend"] == 100.64
+    assert "2026-02-09" in omar["daily_summary"]
+    assert omar["daily_summary"]["2026-02-09"]["count"] == 1
+    assert omar["daily_summary"]["2026-02-09"]["spend"] == 100.64
 
-    assert "2026-02-10" in emp1["daily_summary"]
-    assert emp1["daily_summary"]["2026-02-10"]["count"] == 2
-    assert emp1["daily_summary"]["2026-02-10"]["spend"] == 80.37  # 45.37 + 35.00
+    assert "2026-02-10" in omar["daily_summary"]
+    assert omar["daily_summary"]["2026-02-10"]["count"] == 2
+    assert omar["daily_summary"]["2026-02-10"]["spend"] == 80.37  # 45.37 + 35.00
 
     # Flagged receipt present
-    assert len(emp1["flagged_receipts"]) == 1
-    assert emp1["flagged_receipts"][0]["vendor_name"] == "QuikTrip"
+    assert len(omar["flagged_receipts"]) == 1
+    assert omar["flagged_receipts"][0]["vendor_name"] == "QuikTrip"
     print("  PASS: Employee1's section — $181.01, 3 receipts, 1 flagged")
 
 
@@ -175,8 +175,8 @@ def test_receipt_line_items_in_report():
     report = get_weekly_report_data(db, "2026-02-09", "2026-02-15")
     db.close()
 
-    emp1 = next(e for e in report["employees"] if e["name"] == "Employee1")
-    ace_receipt = next(r for r in emp1["receipts"] if r["vendor_name"] == "Ace Home & Supply")
+    omar = next(e for e in report["employees"] if e["name"] == "Employee1")
+    ace_receipt = next(r for r in omar["receipts"] if r["vendor_name"] == "Ace Home & Supply")
     assert len(ace_receipt["line_items"]) == 3
     assert ace_receipt["line_items"][0]["item_name"] == "Utility Lighter"
     assert ace_receipt["line_items"][2]["extended_price"] == 59.99
@@ -190,10 +190,10 @@ def test_missed_receipt_in_report():
     report = get_weekly_report_data(db, "2026-02-09", "2026-02-15")
     db.close()
 
-    emp2 = next(e for e in report["employees"] if e["name"] == "Employee2")
-    assert emp2["receipt_count"] == 1
-    assert emp2["receipts"][0]["is_missed_receipt"] is True
-    assert emp2["receipts"][0]["status"] == "flagged"
+    mario = next(e for e in report["employees"] if e["name"] == "Employee2")
+    assert mario["receipt_count"] == 1
+    assert mario["receipts"][0]["is_missed_receipt"] is True
+    assert mario["receipts"][0]["status"] == "flagged"
     print("  PASS: Employee2's missed receipt correctly flagged")
 
 

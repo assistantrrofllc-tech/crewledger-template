@@ -61,7 +61,7 @@ configuration files, and documentation:
 | Any real phone numbers | +10000000000 |
 | Any real IP addresses or hostnames | your-vps-hostname |
 | Any API keys or tokens | YOUR_KEY_HERE |
-| R&R specific project names | Sample Project |
+| Client-specific project names | Sample Project |
 
 ### What To Remove From The Template
 - All sample data and seed scripts containing real information
@@ -92,7 +92,7 @@ To deploy for a new client:
 ```
 
 ### After Template Is Created
-- Current repo (ClaudeCode) stays as the R&R Florida live instance
+- Current repo (ClaudeCode) stays as the Client Company live instance
 - Template repo is the starting point for every new client
 - New client = fork template, configure, deploy
 

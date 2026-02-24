@@ -11,6 +11,7 @@ import csv
 import io
 import json
 import logging
+import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -19,12 +20,39 @@ from flask import (
     Response, send_file,
 )
 
-from config.settings import RECEIPT_STORAGE_PATH
+from config.settings import RECEIPT_STORAGE_PATH, CERT_STORAGE_PATH
 from src.database.connection import get_db
+from src.services.cert_status import calculate_cert_status, days_until_expiry
+from src.services.permissions import check_permission
 
 log = logging.getLogger(__name__)
 
 dashboard_bp = Blueprint("dashboard", __name__)
+
+# Per-module sub-navigation (Layer 2)
+MODULE_NAVS = {
+    "crewledger": [
+        {"id": "dashboard", "label": "Dashboard", "href": "/"},
+        {"id": "ledger", "label": "Ledger", "href": "/ledger"},
+        {"id": "projects", "label": "Projects", "href": "/projects"},
+        {"id": "settings", "label": "Settings", "href": "/settings"},
+    ],
+    "crewcert": [
+        {"id": "dashboard", "label": "Dashboard", "href": "/crewcert"},
+        {"id": "employees", "label": "Employees", "href": "/crew"},
+    ],
+}
+
+
+def _render_module(template, active_module, active_subnav="", **kwargs):
+    """Render a template with module navigation context."""
+    return render_template(
+        template,
+        active_module=active_module,
+        active_subnav=active_subnav,
+        module_nav=MODULE_NAVS.get(active_module, []),
+        **kwargs,
+    )
 
 
 # ── Pages ────────────────────────────────────────────────────
@@ -39,7 +67,8 @@ def home():
         flagged = _get_flagged_receipts(db)
         recent = _get_recent_receipts(db, limit=10)
         unknown = _get_unknown_contacts(db, limit=10)
-        return render_template("index.html", stats=stats, flagged=flagged, recent=recent, unknown=unknown)
+        can_edit = check_permission(None, "crewledger", "edit")
+        return _render_module("index.html", "crewledger", "dashboard", stats=stats, flagged=flagged, recent=recent, unknown=unknown, can_edit=can_edit)
     finally:
         db.close()
 
@@ -63,6 +92,56 @@ def serve_receipt_image(filename):
 
     # Ensure the resolved path is inside the storage directory
     if not str(file_path).startswith(str(storage_dir)):
+        abort(404)
+
+    if not file_path.exists():
+        abort(404)
+
+    return send_from_directory(str(storage_dir), filename)
+
+
+# ── Cert Document Serving ────────────────────────────────────
+
+
+@dashboard_bp.route("/certs/file/<filename>")
+def serve_cert_file(filename):
+    """Serve a cert PDF from the cert_files directory.
+
+    Path traversal protection: filename must not contain path separators.
+    Files stored at storage/certifications/cert_files/<filename>.
+    """
+    if "/" in filename or "\\" in filename or ".." in filename:
+        abort(404)
+
+    storage_dir = (Path(CERT_STORAGE_PATH) / "cert_files").resolve()
+    file_path = (storage_dir / filename).resolve()
+
+    if not str(file_path).startswith(str(storage_dir)):
+        abort(404)
+    if not file_path.exists():
+        abort(404)
+
+    return send_from_directory(str(storage_dir), filename, mimetype="application/pdf")
+
+
+@dashboard_bp.route("/certifications/document/<employee_uuid>/<filename>")
+def serve_cert_document(employee_uuid, filename):
+    """Serve a cert document from local storage.
+
+    Path traversal protection: validates UUID format and filename.
+    Files stored at storage/certifications/<employee_uuid>/<filename>.
+    """
+    # Block path traversal
+    if "/" in filename or "\\" in filename or ".." in filename:
+        abort(404)
+    if ".." in employee_uuid or "/" in employee_uuid or "\\" in employee_uuid:
+        abort(404)
+
+    storage_dir = Path(CERT_STORAGE_PATH).resolve() / employee_uuid
+    file_path = (storage_dir / filename).resolve()
+
+    # Ensure resolved path is inside the cert storage directory
+    if not str(file_path).startswith(str(Path(CERT_STORAGE_PATH).resolve())):
         abort(404)
 
     if not file_path.exists():
@@ -125,14 +204,17 @@ def api_create_receipt():
             if not proj:
                 return jsonify({"error": "Project not found"}), 404
 
+        category_id = data.get("category_id") or None
+
         cursor = db.execute(
             """INSERT INTO receipts
-               (employee_id, project_id, vendor_name, purchase_date, subtotal, tax, total,
+               (employee_id, project_id, category_id, vendor_name, purchase_date, subtotal, tax, total,
                 payment_method, notes, status, confirmed_at, is_missed_receipt)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', datetime('now'), 1)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', datetime('now'), 1)""",
             (
                 employee_id,
                 project_id,
+                category_id,
                 vendor_name,
                 data.get("purchase_date"),
                 data.get("subtotal") or 0,
@@ -209,7 +291,7 @@ def employees_page():
                    (SELECT MAX(r.created_at) FROM receipts r WHERE r.employee_id = e.id) as last_submission
             FROM employees e ORDER BY e.first_name
         """).fetchall()
-        return render_template("employees.html", employees=[dict(e) for e in employees])
+        return _render_module("employees.html", "crewledger", "", employees=[dict(e) for e in employees])
     finally:
         db.close()
 
@@ -246,9 +328,10 @@ def api_add_employee():
         if existing:
             return jsonify({"error": "Phone number already registered"}), 409
 
+        token = secrets.token_urlsafe(12)
         db.execute(
-            "INSERT INTO employees (phone_number, first_name, full_name, role, crew) VALUES (?, ?, ?, ?, ?)",
-            (phone, data["first_name"], data.get("full_name"), data.get("role"), data.get("crew")),
+            "INSERT INTO employees (phone_number, first_name, full_name, email, role, crew, public_token) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (phone, data["first_name"], data.get("full_name"), data.get("email"), data.get("role"), data.get("crew"), token),
         )
         db.commit()
         return jsonify({"status": "created", "phone_number": phone}), 201
@@ -276,7 +359,7 @@ def api_update_employee(employee_id):
     if not data:
         return jsonify({"error": "No data provided"}), 400
 
-    allowed = {"first_name", "full_name", "role", "crew", "phone_number"}
+    allowed = {"first_name", "full_name", "email", "role", "crew", "phone_number", "notes", "nickname", "is_driver"}
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({"error": "No valid fields to update"}), 400
@@ -327,8 +410,14 @@ def api_projects():
     try:
         rows = db.execute("""
             SELECT p.*,
-                   (SELECT COUNT(*) FROM receipts r WHERE r.project_id = p.id) as receipt_count,
-                   (SELECT COALESCE(SUM(r.total), 0) FROM receipts r WHERE r.project_id = p.id) as total_spend
+                   (SELECT COUNT(*) FROM receipts r
+                    WHERE r.status NOT IN ('deleted', 'duplicate')
+                      AND (r.project_id = p.id OR r.matched_project_name = p.name)
+                   ) as receipt_count,
+                   (SELECT COALESCE(SUM(r.total), 0) FROM receipts r
+                    WHERE r.status NOT IN ('deleted', 'duplicate')
+                      AND (r.project_id = p.id OR r.matched_project_name = p.name)
+                   ) as total_spend
             FROM projects p ORDER BY p.name
         """).fetchall()
         return jsonify([dict(r) for r in rows])
@@ -428,6 +517,116 @@ def api_project_detail(project_id):
         db.close()
 
 
+# ── Categories ───────────────────────────────────────────
+
+
+@dashboard_bp.route("/api/categories", methods=["GET"])
+def api_categories():
+    """List all categories. Pass ?active=1 to get only active ones."""
+    db = get_db()
+    try:
+        active_only = request.args.get("active", "0")
+        if active_only == "1":
+            rows = db.execute("SELECT * FROM categories WHERE is_active = 1 ORDER BY sort_order, name").fetchall()
+        else:
+            rows = db.execute("SELECT * FROM categories ORDER BY sort_order, name").fetchall()
+        # Include receipt count for management UI
+        result = []
+        for r in rows:
+            d = dict(r)
+            count = db.execute(
+                "SELECT COUNT(*) as cnt FROM receipts WHERE category_id = ? AND status NOT IN ('deleted','duplicate')",
+                (r["id"],),
+            ).fetchone()
+            d["receipt_count"] = count["cnt"] if count else 0
+            result.append(d)
+        return jsonify(result)
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/categories", methods=["POST"])
+def api_add_category():
+    """Add a new category."""
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+
+    db = get_db()
+    try:
+        existing = db.execute("SELECT id FROM categories WHERE LOWER(name) = LOWER(?)", (name,)).fetchone()
+        if existing:
+            return jsonify({"error": "Category already exists"}), 409
+        max_order = db.execute("SELECT MAX(sort_order) as m FROM categories").fetchone()["m"] or 0
+        cursor = db.execute(
+            "INSERT INTO categories (name, description, sort_order) VALUES (?, ?, ?)",
+            (name, data.get("description", ""), max_order + 1),
+        )
+        db.commit()
+        return jsonify({"status": "created", "id": cursor.lastrowid, "name": name}), 201
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/categories/<int:cat_id>", methods=["PUT"])
+def api_update_category(cat_id):
+    """Rename or update a category."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    try:
+        cat = db.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
+        if not cat:
+            return jsonify({"error": "Category not found"}), 404
+
+        name = (data.get("name") or "").strip()
+        if name and name != cat["name"]:
+            dup = db.execute("SELECT id FROM categories WHERE LOWER(name) = LOWER(?) AND id != ?", (name, cat_id)).fetchone()
+            if dup:
+                return jsonify({"error": "A category with that name already exists"}), 409
+            # Count receipts using this category for the warning
+            count = db.execute(
+                "SELECT COUNT(*) as cnt FROM receipts WHERE category_id = ?", (cat_id,)
+            ).fetchone()["cnt"]
+            db.execute("UPDATE categories SET name = ? WHERE id = ?", (name, cat_id))
+            db.commit()
+            return jsonify({"status": "updated", "receipt_count": count})
+
+        return jsonify({"status": "no_change"})
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/categories/<int:cat_id>/deactivate", methods=["POST"])
+def api_deactivate_category(cat_id):
+    """Deactivate a category — hidden from dropdowns, historical receipts keep it."""
+    db = get_db()
+    try:
+        cat = db.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
+        if not cat:
+            return jsonify({"error": "Category not found"}), 404
+        db.execute("UPDATE categories SET is_active = 0 WHERE id = ?", (cat_id,))
+        db.commit()
+        return jsonify({"status": "deactivated"})
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/categories/<int:cat_id>/activate", methods=["POST"])
+def api_activate_category(cat_id):
+    """Reactivate a deactivated category."""
+    db = get_db()
+    try:
+        cat = db.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)).fetchone()
+        if not cat:
+            return jsonify({"error": "Category not found"}), 404
+        db.execute("UPDATE categories SET is_active = 1 WHERE id = ?", (cat_id,))
+        db.commit()
+        return jsonify({"status": "activated"})
+    finally:
+        db.close()
+
+
 # ── Unknown Contacts ─────────────────────────────────────
 
 
@@ -455,12 +654,580 @@ def ledger_page():
         employees = db.execute("SELECT id, first_name FROM employees ORDER BY first_name").fetchall()
         projects = db.execute("SELECT id, name FROM projects WHERE status = 'active' ORDER BY name").fetchall()
         categories = db.execute("SELECT id, name FROM categories ORDER BY name").fetchall()
-        return render_template(
-            "ledger.html",
+        can_edit = check_permission(None, "crewledger", "edit")
+        return _render_module(
+            "ledger.html", "crewledger", "ledger",
             employees=[dict(e) for e in employees],
             projects=[dict(p) for p in projects],
             categories=[dict(c) for c in categories],
+            can_edit=can_edit,
         )
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/crewcert")
+def crewcert_home():
+    """CrewCert module home — certification dashboard with summary and alerts."""
+    if not check_permission(None, "crewcert", "view"):
+        abort(403)
+    return _render_module("crewcert_dashboard.html", "crewcert", "dashboard")
+
+
+@dashboard_bp.route("/crew")
+def crew_page():
+    """CrewCert module — employee roster and certification tracking."""
+    if not check_permission(None, "crewcert", "view"):
+        abort(403)
+    return _render_module("crew.html", "crewcert", "employees")
+
+
+@dashboard_bp.route("/crew/<int:employee_id>")
+def crew_detail_page(employee_id):
+    """CrewCert — individual employee profile and certifications."""
+    db = get_db()
+    try:
+        emp = db.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if not emp:
+            abort(404)
+
+        cert_types = db.execute(
+            "SELECT * FROM certification_types WHERE is_active = 1 ORDER BY sort_order"
+        ).fetchall()
+
+        return _render_module(
+            "crew_detail.html", "crewcert", "employees",
+            employee=dict(emp),
+            cert_types=[dict(ct) for ct in cert_types],
+        )
+    finally:
+        db.close()
+
+
+# ── Public Cert Verification ─────────────────────────────
+
+
+# Simple in-memory rate limiter: token -> list of timestamps
+_scan_rate_limit: dict[str, list[float]] = {}
+
+
+@dashboard_bp.route("/crew/verify/<token>")
+def public_verify(token):
+    """Public cert verification page — no login required.
+
+    Looked up by public_token. Shows employee name + certs only.
+    Rate limited to 30 requests per token per hour.
+    """
+    import time
+
+    # Rate limiting: 30 requests per token per hour
+    now = time.time()
+    window = _scan_rate_limit.get(token, [])
+    window = [t for t in window if now - t < 3600]
+    if len(window) >= 30:
+        return render_template("verify_rate_limited.html"), 429
+    window.append(now)
+    _scan_rate_limit[token] = window
+
+    db = get_db()
+    try:
+        emp = db.execute(
+            "SELECT id, first_name, full_name, photo, is_active, public_token FROM employees WHERE public_token = ?",
+            (token,),
+        ).fetchone()
+
+        if not emp:
+            return render_template("verify_invalid.html"), 404
+
+        if not emp["is_active"]:
+            return render_template("verify_inactive.html"), 200
+
+        # Log the scan
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        if ip and "," in ip:
+            ip = ip.split(",")[0].strip()
+        ua = request.headers.get("User-Agent", "")[:200]
+        db.execute(
+            "INSERT INTO qr_scan_log (employee_id, ip_address, user_agent) VALUES (?, ?, ?)",
+            (emp["id"], ip, ua),
+        )
+        db.commit()
+
+        # Get active certs
+        certs = db.execute("""
+            SELECT c.id, ct.name as cert_name, c.issued_at, c.expires_at, c.document_path
+            FROM certifications c
+            JOIN certification_types ct ON c.cert_type_id = ct.id
+            WHERE c.employee_id = ? AND c.is_active = 1
+            ORDER BY ct.sort_order
+        """, (emp["id"],)).fetchall()
+
+        cert_list = []
+        for c in certs:
+            status = calculate_cert_status(c["expires_at"])
+            has_doc = bool(c["document_path"])
+            if has_doc:
+                doc_full = Path(CERT_STORAGE_PATH) / c["document_path"]
+                has_doc = doc_full.exists()
+            cert_list.append({
+                "id": c["id"],
+                "name": c["cert_name"],
+                "issued_at": c["issued_at"],
+                "expires_at": c["expires_at"],
+                "status": status,
+                "has_document": has_doc,
+            })
+
+        return render_template(
+            "verify_public.html",
+            employee_name=emp["full_name"] or emp["first_name"],
+            employee_photo=emp["photo"],
+            certs=cert_list,
+            token=token,
+            verified_at=datetime.now().strftime("%b %d, %Y %I:%M%p"),
+        )
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/crew/verify/<token>/cert/<int:cert_id>")
+def public_verify_cert(token, cert_id):
+    """Serve a cert document publicly — scoped to the employee's token.
+
+    No login required. Token must belong to an active employee.
+    cert_id must belong to that employee. Rate limited same as verify page.
+    """
+    import time
+
+    # Rate limiting: shared with verify page (30 req/hr/token)
+    now = time.time()
+    window = _scan_rate_limit.get(token, [])
+    window = [t for t in window if now - t < 3600]
+    if len(window) >= 30:
+        return render_template("verify_rate_limited.html"), 429
+    window.append(now)
+    _scan_rate_limit[token] = window
+
+    db = get_db()
+    try:
+        emp = db.execute(
+            "SELECT id, is_active, employee_uuid FROM employees WHERE public_token = ?",
+            (token,),
+        ).fetchone()
+
+        if not emp:
+            return render_template("verify_invalid.html"), 404
+        if not emp["is_active"]:
+            return render_template("verify_inactive.html"), 200
+
+        # Cert must belong to this employee
+        cert = db.execute(
+            "SELECT id, document_path FROM certifications WHERE id = ? AND employee_id = ? AND is_active = 1",
+            (cert_id, emp["id"]),
+        ).fetchone()
+
+        if not cert:
+            abort(404)
+
+        # Log the document view
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        if ip and "," in ip:
+            ip = ip.split(",")[0].strip()
+        ua = request.headers.get("User-Agent", "")[:200]
+        db.execute(
+            "INSERT INTO qr_scan_log (employee_id, ip_address, user_agent) VALUES (?, ?, ?)",
+            (emp["id"], ip, ua),
+        )
+        db.commit()
+
+        # Check document exists
+        if not cert["document_path"]:
+            return render_template("verify_no_document.html"), 200
+
+        doc_path = (Path(CERT_STORAGE_PATH) / cert["document_path"]).resolve()
+        if not str(doc_path).startswith(str(Path(CERT_STORAGE_PATH).resolve())):
+            abort(404)
+        if not doc_path.exists():
+            return render_template("verify_no_document.html"), 200
+
+        return send_file(doc_path, as_attachment=False)
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/employees/<int:employee_id>/qr")
+def api_employee_qr(employee_id):
+    """Generate QR code PNG for an employee's public verify URL."""
+    import qrcode
+    from io import BytesIO
+
+    db = get_db()
+    try:
+        emp = db.execute("SELECT public_token FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if not emp or not emp["public_token"]:
+            return jsonify({"error": "Employee not found or no token"}), 404
+
+        host = request.host_url.rstrip("/")
+        url = f"{host}/crew/verify/{emp['public_token']}"
+
+        qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+
+        return send_file(buf, mimetype="image/png", as_attachment=False, download_name=f"qr_{employee_id}.png")
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/employees/<int:employee_id>/regenerate-token", methods=["POST"])
+def api_regenerate_token(employee_id):
+    """Regenerate public_token for an employee, invalidating old QR code."""
+    db = get_db()
+    try:
+        emp = db.execute("SELECT id FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if not emp:
+            return jsonify({"error": "Employee not found"}), 404
+
+        new_token = secrets.token_urlsafe(12)
+        db.execute(
+            "UPDATE employees SET public_token = ?, updated_at = datetime('now') WHERE id = ?",
+            (new_token, employee_id),
+        )
+        db.commit()
+        return jsonify({"status": "regenerated", "token": new_token})
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/employees/<int:employee_id>/scan-log")
+def api_employee_scan_log(employee_id):
+    """Return the last 20 QR scans for an employee."""
+    db = get_db()
+    try:
+        rows = db.execute("""
+            SELECT scanned_at, ip_address
+            FROM qr_scan_log
+            WHERE employee_id = ?
+            ORDER BY scanned_at DESC
+            LIMIT 20
+        """, (employee_id,)).fetchall()
+        return jsonify([dict(r) for r in rows])
+    finally:
+        db.close()
+
+
+# ── CrewCert Dashboard API ───────────────────────────────
+
+
+@dashboard_bp.route("/api/crewcert/dashboard")
+def api_crewcert_dashboard():
+    """Dashboard summary: counts, active alerts, upcoming expirations."""
+    db = get_db()
+    try:
+        # Summary counts
+        total_employees = db.execute(
+            "SELECT COUNT(*) as cnt FROM employees WHERE is_active = 1"
+        ).fetchone()["cnt"]
+
+        # Get all active certs with expiry info
+        certs = db.execute("""
+            SELECT c.id, c.employee_id, c.expires_at, c.cert_type_id,
+                   ct.name as cert_type_name,
+                   e.first_name, e.full_name
+            FROM certifications c
+            JOIN certification_types ct ON c.cert_type_id = ct.id
+            JOIN employees e ON c.employee_id = e.id
+            WHERE c.is_active = 1 AND e.is_active = 1
+        """).fetchall()
+
+        expired_count = 0
+        expiring_count = 0
+        no_expiry_count = 0
+        for c in certs:
+            status = calculate_cert_status(c["expires_at"])
+            if status == "expired":
+                expired_count += 1
+            elif status == "expiring":
+                expiring_count += 1
+            elif status == "no_expiry":
+                no_expiry_count += 1
+
+        # Active (unacknowledged) alerts
+        alerts = db.execute("""
+            SELECT ca.*, e.first_name, e.full_name,
+                   ct.name as cert_type_name, c.expires_at
+            FROM cert_alerts ca
+            JOIN employees e ON ca.employee_id = e.id
+            JOIN certifications c ON ca.cert_id = c.id
+            JOIN certification_types ct ON c.cert_type_id = ct.id
+            WHERE ca.acknowledged = 0
+            ORDER BY
+                CASE ca.alert_type WHEN 'expired' THEN 0 WHEN 'expiring' THEN 1 ELSE 2 END,
+                ca.created_at DESC
+        """).fetchall()
+
+        alert_list = []
+        for a in alerts:
+            days = days_until_expiry(a["expires_at"])
+            alert_list.append({
+                "id": a["id"],
+                "employee_id": a["employee_id"],
+                "cert_id": a["cert_id"],
+                "employee_name": a["full_name"] or a["first_name"],
+                "cert_name": a["cert_type_name"],
+                "alert_type": a["alert_type"],
+                "days_until_expiry": days,
+                "expires_at": a["expires_at"],
+                "created_at": a["created_at"],
+            })
+
+        # Upcoming expirations (next 90 days) for calendar
+        upcoming = db.execute("""
+            SELECT c.expires_at, ct.name as cert_type_name,
+                   e.first_name, e.full_name, e.id as employee_id
+            FROM certifications c
+            JOIN certification_types ct ON c.cert_type_id = ct.id
+            JOIN employees e ON c.employee_id = e.id
+            WHERE c.is_active = 1 AND e.is_active = 1
+              AND c.expires_at IS NOT NULL AND c.expires_at != ''
+              AND c.expires_at >= date('now')
+              AND c.expires_at <= date('now', '+90 days')
+            ORDER BY c.expires_at
+        """).fetchall()
+
+        calendar = []
+        for u in upcoming:
+            calendar.append({
+                "date": u["expires_at"],
+                "cert_name": u["cert_type_name"],
+                "employee_name": u["full_name"] or u["first_name"],
+                "employee_id": u["employee_id"],
+            })
+
+        return jsonify({
+            "total_employees": total_employees,
+            "expired_count": expired_count,
+            "expiring_count": expiring_count,
+            "no_expiry_count": no_expiry_count,
+            "alerts": alert_list,
+            "calendar": calendar,
+        })
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crewcert/alerts/<int:alert_id>/acknowledge", methods=["POST"])
+def api_acknowledge_alert(alert_id):
+    """Acknowledge (dismiss) a cert alert."""
+    db = get_db()
+    try:
+        alert = db.execute("SELECT id FROM cert_alerts WHERE id = ?", (alert_id,)).fetchone()
+        if not alert:
+            return jsonify({"error": "Alert not found"}), 404
+        db.execute(
+            "UPDATE cert_alerts SET acknowledged = 1, acknowledged_at = datetime('now'), acknowledged_by = 'dashboard' WHERE id = ?",
+            (alert_id,),
+        )
+        db.commit()
+        return jsonify({"status": "acknowledged"})
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crewcert/refresh", methods=["POST"])
+def api_refresh_cert_status():
+    """Manually trigger a cert status refresh."""
+    from src.services.cert_refresh import run_cert_status_refresh
+    result = run_cert_status_refresh()
+    return jsonify({"status": "refreshed", **result})
+
+
+# ── CrewCert API ─────────────────────────────────────────
+
+
+@dashboard_bp.route("/api/cert-types")
+def api_cert_types():
+    """List all certification types."""
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT * FROM certification_types WHERE is_active = 1 ORDER BY sort_order"
+        ).fetchall()
+        return jsonify([dict(r) for r in rows])
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/employees")
+def api_crew_employees():
+    """Employee roster with certification badge summary.
+
+    Returns each employee with a `certs` array showing the status
+    of every cert type (valid / expiring / expired / none).
+    """
+    db = get_db()
+    try:
+        cert_types = db.execute(
+            "SELECT id, name, slug FROM certification_types WHERE is_active = 1 ORDER BY sort_order"
+        ).fetchall()
+
+        employees = db.execute("""
+            SELECT id, employee_uuid, first_name, full_name, phone_number,
+                   email, role, crew, is_active, nickname, is_driver
+            FROM employees ORDER BY first_name
+        """).fetchall()
+
+        result = []
+        for emp in employees:
+            emp_dict = dict(emp)
+
+            # Get this employee's most recent cert per type
+            certs = db.execute("""
+                SELECT c.cert_type_id, c.issued_at, c.expires_at
+                FROM certifications c
+                WHERE c.employee_id = ? AND c.is_active = 1
+                ORDER BY c.issued_at DESC
+            """, (emp["id"],)).fetchall()
+
+            # Build a lookup: cert_type_id -> most recent cert
+            cert_lookup = {}
+            for c in certs:
+                if c["cert_type_id"] not in cert_lookup:
+                    cert_lookup[c["cert_type_id"]] = dict(c)
+
+            # Build badge array
+            badges = []
+            has_expired = False
+            has_expiring = False
+            for ct in cert_types:
+                cert = cert_lookup.get(ct["id"])
+                if cert:
+                    status = calculate_cert_status(cert["expires_at"])
+                else:
+                    status = "none"
+
+                if status == "expired":
+                    has_expired = True
+                elif status == "expiring":
+                    has_expiring = True
+
+                badges.append({
+                    "type_id": ct["id"],
+                    "slug": ct["slug"],
+                    "name": ct["name"],
+                    "status": status,
+                })
+
+            emp_dict["certs"] = badges
+            emp_dict["has_expired"] = has_expired
+            emp_dict["has_expiring"] = has_expiring
+            result.append(emp_dict)
+
+        return jsonify(result)
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/employees/<int:employee_id>/certs")
+def api_employee_certs(employee_id):
+    """Full certification list for one employee."""
+    db = get_db()
+    try:
+        emp = db.execute("SELECT id FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if not emp:
+            return jsonify({"error": "Employee not found"}), 404
+
+        rows = db.execute("""
+            SELECT c.*, ct.name as cert_type_name, ct.slug as cert_type_slug
+            FROM certifications c
+            JOIN certification_types ct ON c.cert_type_id = ct.id
+            WHERE c.employee_id = ? AND c.is_active = 1
+            ORDER BY ct.sort_order
+        """, (employee_id,)).fetchall()
+
+        certs = []
+        for r in rows:
+            d = dict(r)
+            d["status"] = calculate_cert_status(r["expires_at"])
+            certs.append(d)
+
+        return jsonify(certs)
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/certifications", methods=["POST"])
+def api_add_certification():
+    """Add a new certification record."""
+    data = request.get_json(silent=True) or {}
+    employee_id = data.get("employee_id")
+    cert_type_id = data.get("cert_type_id")
+
+    if not employee_id or not cert_type_id:
+        return jsonify({"error": "employee_id and cert_type_id are required"}), 400
+
+    db = get_db()
+    try:
+        cursor = db.execute(
+            """INSERT INTO certifications
+               (employee_id, cert_type_id, issued_at, expires_at, issuing_org, notes)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                employee_id, cert_type_id,
+                data.get("issued_at"), data.get("expires_at"),
+                data.get("issuing_org"), data.get("notes"),
+            ),
+        )
+        db.commit()
+        return jsonify({"status": "created", "id": cursor.lastrowid}), 201
+    except Exception as e:
+        if "UNIQUE constraint" in str(e):
+            return jsonify({"error": "Duplicate certification record"}), 409
+        raise
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/certifications/<int:cert_id>", methods=["PUT"])
+def api_update_certification(cert_id):
+    """Update a certification record."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    try:
+        cert = db.execute("SELECT id FROM certifications WHERE id = ? AND is_active = 1", (cert_id,)).fetchone()
+        if not cert:
+            return jsonify({"error": "Certification not found"}), 404
+
+        allowed = {"cert_type_id", "issued_at", "expires_at", "issuing_org", "notes", "document_path"}
+        updates = {k: v for k, v in data.items() if k in allowed}
+        if not updates:
+            return jsonify({"error": "No valid fields to update"}), 400
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [cert_id]
+        db.execute(f"UPDATE certifications SET {set_clause}, updated_at = datetime('now') WHERE id = ?", values)
+        db.commit()
+        return jsonify({"status": "updated"})
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/api/crew/certifications/<int:cert_id>/delete", methods=["POST"])
+def api_delete_certification(cert_id):
+    """Soft-delete a certification record."""
+    db = get_db()
+    try:
+        cert = db.execute("SELECT id FROM certifications WHERE id = ? AND is_active = 1", (cert_id,)).fetchone()
+        if not cert:
+            return jsonify({"error": "Certification not found"}), 404
+        db.execute("UPDATE certifications SET is_active = 0, updated_at = datetime('now') WHERE id = ?", (cert_id,))
+        db.commit()
+        return jsonify({"status": "deleted"})
     finally:
         db.close()
 
@@ -479,8 +1246,8 @@ def projects_page():
                    (SELECT COALESCE(SUM(r.total), 0) FROM receipts r WHERE r.project_id = p.id) as total_spend
             FROM projects p ORDER BY p.name
         """).fetchall()
-        return render_template(
-            "projects.html",
+        return _render_module(
+            "projects.html", "crewledger", "projects",
             projects=[dict(p) for p in projects],
         )
     finally:
@@ -499,8 +1266,8 @@ def settings_page():
         settings = {r["key"]: r["value"] for r in rows}
         employees = db.execute("SELECT id, first_name FROM employees ORDER BY first_name").fetchall()
         projects = db.execute("SELECT id, name FROM projects WHERE status = 'active' ORDER BY name").fetchall()
-        return render_template(
-            "settings.html",
+        return _render_module(
+            "settings.html", "crewledger", "settings",
             settings=settings,
             employees=[dict(e) for e in employees],
             projects=[dict(p) for p in projects],
@@ -737,6 +1504,8 @@ def dismiss_receipt(receipt_id):
 @dashboard_bp.route("/api/dashboard/flagged/<int:receipt_id>/edit", methods=["POST"])
 def edit_receipt(receipt_id):
     """Edit a flagged receipt's fields, then approve it."""
+    if not check_permission(None, "crewledger", "edit"):
+        return jsonify({"error": "Insufficient permissions"}), 403
     data = request.get_json(silent=True) or {}
     db = get_db()
     try:
@@ -780,8 +1549,10 @@ def api_edit_receipt(receipt_id):
 
     Accepts JSON with any of: vendor_name, vendor_city, vendor_state,
     purchase_date, subtotal, tax, total, payment_method, notes,
-    matched_project_name, project_id.
+    matched_project_name, project_id, employee_id.
     """
+    if not check_permission(None, "crewledger", "edit"):
+        return jsonify({"error": "Insufficient permissions"}), 403
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"error": "No data provided"}), 400
@@ -795,7 +1566,8 @@ def api_edit_receipt(receipt_id):
         allowed_fields = {
             "vendor_name", "vendor_city", "vendor_state", "purchase_date",
             "subtotal", "tax", "total", "payment_method", "notes",
-            "matched_project_name", "project_id", "status", "duplicate_of",
+            "matched_project_name", "project_id", "category_id", "status", "duplicate_of",
+            "employee_id",
         }
         updates = {k: v for k, v in data.items() if k in allowed_fields}
         if not updates:
@@ -805,14 +1577,48 @@ def api_edit_receipt(receipt_id):
         for field, new_val in updates.items():
             old_val = receipt[field]
             if str(old_val) != str(new_val):
-                db.execute(
-                    "INSERT INTO receipt_edits (receipt_id, field_changed, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)",
-                    (receipt_id, field, str(old_val) if old_val is not None else None, str(new_val), "dashboard"),
-                )
+                # For employee_id changes, log human-readable names
+                if field == "employee_id":
+                    old_emp = db.execute("SELECT first_name, full_name FROM employees WHERE id = ?", (old_val,)).fetchone()
+                    new_emp = db.execute("SELECT first_name, full_name FROM employees WHERE id = ?", (new_val,)).fetchone()
+                    old_display = (old_emp["full_name"] or old_emp["first_name"]) if old_emp else str(old_val)
+                    new_display = (new_emp["full_name"] or new_emp["first_name"]) if new_emp else str(new_val)
+                    db.execute(
+                        "INSERT INTO receipt_edits (receipt_id, field_changed, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)",
+                        (receipt_id, "employee_id", old_display, new_display, "dashboard"),
+                    )
+                elif field == "project_id":
+                    old_proj = db.execute("SELECT name FROM projects WHERE id = ?", (old_val,)).fetchone() if old_val else None
+                    new_proj = db.execute("SELECT name FROM projects WHERE id = ?", (new_val,)).fetchone() if new_val else None
+                    old_display = old_proj["name"] if old_proj else None
+                    new_display = new_proj["name"] if new_proj else None
+                    db.execute(
+                        "INSERT INTO receipt_edits (receipt_id, field_changed, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)",
+                        (receipt_id, "project", old_display, new_display, "dashboard"),
+                    )
+                else:
+                    db.execute(
+                        "INSERT INTO receipt_edits (receipt_id, field_changed, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)",
+                        (receipt_id, field, str(old_val) if old_val is not None else None, str(new_val), "dashboard"),
+                    )
 
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [receipt_id]
         db.execute(f"UPDATE receipts SET {set_clause} WHERE id = ?", values)
+
+        # Clear conversation state if status changed via dashboard
+        if "status" in updates and updates["status"] in ("confirmed", "deleted"):
+            employee_id = receipt["employee_id"]
+            convo = db.execute(
+                "SELECT id FROM conversation_state WHERE employee_id = ? AND receipt_id = ?",
+                (employee_id, receipt_id),
+            ).fetchone()
+            if convo:
+                db.execute(
+                    "UPDATE conversation_state SET state = 'idle', updated_at = datetime('now') WHERE id = ?",
+                    (convo["id"],),
+                )
+
         db.commit()
 
         log.info("Receipt #%d edited via dashboard (%s)", receipt_id, ", ".join(updates.keys()))
@@ -842,6 +1648,8 @@ def api_receipt_edit_history(receipt_id):
 @dashboard_bp.route("/api/receipts/<int:receipt_id>/delete", methods=["POST"])
 def api_delete_receipt(receipt_id):
     """Soft-delete a receipt (set status to 'deleted')."""
+    if not check_permission(None, "crewledger", "edit"):
+        return jsonify({"error": "Insufficient permissions"}), 403
     db = get_db()
     try:
         receipt = db.execute("SELECT * FROM receipts WHERE id = ?", (receipt_id,)).fetchone()
@@ -854,6 +1662,17 @@ def api_delete_receipt(receipt_id):
             "INSERT INTO receipt_edits (receipt_id, field_changed, old_value, new_value, edited_by) VALUES (?, 'status', ?, 'deleted', 'management')",
             (receipt_id, old_status),
         )
+        # Clear conversation state so employee can submit new receipts
+        employee_id = receipt["employee_id"]
+        convo = db.execute(
+            "SELECT id FROM conversation_state WHERE employee_id = ? AND receipt_id = ?",
+            (employee_id, receipt_id),
+        ).fetchone()
+        if convo:
+            db.execute(
+                "UPDATE conversation_state SET state = 'idle', updated_at = datetime('now') WHERE id = ?",
+                (convo["id"],),
+            )
         db.commit()
         log.info("Receipt #%d soft-deleted (was %s)", receipt_id, old_status)
         return jsonify({"status": "deleted", "id": receipt_id})
@@ -1262,25 +2081,26 @@ def _query_receipts(db, args) -> list:
     conditions = []
     params = []
 
-    # Period filter
+    # Period filter — use purchase_date (actual receipt date), fall back to created_at
+    date_col = "COALESCE(r.purchase_date, date(r.created_at))"
     period = args.get("period", "all")
     if period == "today":
-        conditions.append("r.created_at >= date('now')")
+        conditions.append(f"{date_col} >= date('now')")
     elif period == "week":
-        conditions.append("r.created_at >= date('now', 'weekday 1', '-7 days')")
+        conditions.append(f"{date_col} >= date('now', '-' || ((strftime('%w', 'now') + 6) % 7) || ' days')")
     elif period == "month":
-        conditions.append("r.created_at >= date('now', 'start of month')")
+        conditions.append(f"{date_col} >= date('now', 'start of month')")
     elif period == "ytd":
-        conditions.append("r.created_at >= date('now', 'start of year')")
+        conditions.append(f"{date_col} >= date('now', 'start of year')")
 
     # Custom date range
     start = args.get("start")
     end = args.get("end")
     if start:
-        conditions.append("r.created_at >= ?")
+        conditions.append(f"{date_col} >= ?")
         params.append(start)
     if end:
-        conditions.append("r.created_at < date(?, '+1 day')")
+        conditions.append(f"{date_col} <= ?")
         params.append(end)
 
     # Filters
@@ -1313,23 +2133,24 @@ def _query_receipts(db, args) -> list:
 
     # Sorting
     sort_map = {
-        "date": "r.created_at",
+        "date": "COALESCE(r.purchase_date, date(r.created_at))",
         "employee": "e.first_name",
         "vendor": "r.vendor_name",
         "project": "p.name",
         "amount": "r.total",
         "status": "r.status",
-        "category": "r.vendor_name",
     }
-    sort_col = sort_map.get(args.get("sort", "date"), "r.created_at")
+    sort_col = sort_map.get(args.get("sort", "date"), "COALESCE(r.purchase_date, date(r.created_at))")
     order = "ASC" if args.get("order") == "asc" else "DESC"
 
     rows = db.execute(f"""
         SELECT r.*, e.first_name as employee_name, e.crew,
-               p.name as project_name
+               p.name as project_name,
+               cat.name as category
         FROM receipts r
         LEFT JOIN employees e ON r.employee_id = e.id
         LEFT JOIN projects p ON r.project_id = p.id
+        LEFT JOIN categories cat ON r.category_id = cat.id
         WHERE {where}
         ORDER BY {sort_col} {order}
         LIMIT 500
@@ -1342,10 +2163,12 @@ def _get_receipt_detail(db, receipt_id: int) -> dict | None:
     """Single receipt with line items."""
     row = db.execute("""
         SELECT r.*, e.first_name as employee_name, e.crew,
-               p.name as project_name
+               p.name as project_name,
+               cat.name as category
         FROM receipts r
         LEFT JOIN employees e ON r.employee_id = e.id
         LEFT JOIN projects p ON r.project_id = p.id
+        LEFT JOIN categories cat ON r.category_id = cat.id
         WHERE r.id = ?
     """, (receipt_id,)).fetchone()
 

@@ -1,7 +1,7 @@
 # CrewOS — Session Context
 
 **Modular Field Operations Platform for Small Business**
-**Your Company LLC | Client Admin | Feb 2026**
+**Tech Quest LLC | Admin User | Feb 2026**
 
 ---
 
@@ -30,7 +30,7 @@ This repo contains **CrewLedger** (Module 1 of CrewOS) — an SMS-based receipt 
 - **The employee database is sacred.** Every module depends on it. Changes require review.
 - **Mobile first on every UI decision.** Field crews live on their phones.
 - **Frontend is plain HTML/CSS/JS.** No React, no build step.
-- **Real world use is the only proof.** If Accountant and the field crew aren't using it, it's not done.
+- **Real world use is the only proof.** If the accountant and the field crew aren't using it, it's not done.
 
 ---
 

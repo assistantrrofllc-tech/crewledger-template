@@ -95,7 +95,7 @@ def test_unknown_number_with_media_silenced():
     """Unknown number sends a photo → silenced, flagged with has_media=1."""
     setup_test_db()
     client = get_test_client()
-    resp = twilio_post(client, body="Project Sample Project", num_media=1, media_url="https://example.com/img.jpg")
+    resp = twilio_post(client, body="Project Alpha", num_media=1, media_url="https://example.com/img.jpg")
     assert resp.status_code == 200
     assert b"<Message>" not in resp.data
 
@@ -155,22 +155,18 @@ def test_receipt_submission_with_photo():
         mock_ocr.return_value = mock_ocr_data
         resp = twilio_post(
             client,
-            body="Project Sample Project",
+            body="Project Alpha",
             num_media=1,
             media_url="https://api.twilio.com/fake/media/img123",
         )
 
     assert resp.status_code == 200
     body = resp.data.decode()
-    # TwiML XML-encodes & to &amp; so check both forms
+    # Auto-confirm: simple acknowledgment message (no confirmation prompt)
     assert "Ace Home" in body
-    assert "Anytown FL" in body
     assert "$100.64" in body
-    assert "3 items" in body
-    assert "Utility Lighter" in body
-    assert "Project: Project Sample Project" in body
     assert "Employee1" in body
-    assert "YES" in body
+    assert "logged" in body
 
     # Verify receipt was created with OCR data
     db = get_db(TEST_DB)
@@ -180,7 +176,7 @@ def test_receipt_submission_with_photo():
     assert receipt["vendor_name"] == "Ace Home & Supply"
     assert receipt["vendor_city"] == "Anytown"
     assert receipt["total"] == 100.64
-    assert receipt["matched_project_name"] == "Project Sample Project"
+    assert receipt["matched_project_name"] == "Project Alpha"
     assert receipt["raw_ocr_json"] is not None
 
     # Verify line items were saved
@@ -189,12 +185,12 @@ def test_receipt_submission_with_photo():
     assert items[0]["item_name"] == "Utility Lighter"
     assert items[1]["unit_price"] == 27.99
 
-    # Verify conversation state
+    # Verify conversation state — auto-confirm sets state to idle
     convo = db.execute("SELECT * FROM conversation_state WHERE employee_id = 1").fetchone()
-    assert convo["state"] == "awaiting_confirmation"
+    assert convo["state"] == "idle"
     assert convo["receipt_id"] == receipt["id"]
     db.close()
-    print("  PASS: photo receipt → OCR data saved, confirmation message sent")
+    print("  PASS: photo receipt → OCR data saved, auto-confirmed")
 
 
 def test_receipt_submission_ocr_failure():
@@ -213,7 +209,7 @@ def test_receipt_submission_ocr_failure():
         mock_ocr.return_value = None  # OCR failed
         resp = twilio_post(
             client,
-            body="Project Sample Project",
+            body="Project Alpha",
             num_media=1,
             media_url="https://api.twilio.com/fake/media/img123",
         )
@@ -316,7 +312,7 @@ def test_missed_receipt_details():
     db.close()
 
     client = get_test_client()
-    resp = twilio_post(client, body="Home Depot, about $45, roofing nails and caulk, Project Sample Project")
+    resp = twilio_post(client, body="Home Depot, about $45, roofing nails and caulk, Project Alpha")
     assert resp.status_code == 200
     assert b"logged" in resp.data
 

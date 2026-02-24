@@ -1,0 +1,589 @@
+{% extends "base.html" %}
+{% block title %}CrewCert — {{ employee.full_name or employee.first_name }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display:flex; align-items:center; gap:8px;">
+        <a href="/crew" style="color:var(--text-muted); font-size:14px; text-decoration:none;">&larr; Crew</a>
+    </div>
+</div>
+
+<!-- Identity Card -->
+<div class="card emp-card">
+    <div class="emp-card__header">
+        <div class="emp-card__avatar">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M5.5 21c0-4.14 2.91-7 6.5-7s6.5 2.86 6.5 7"/></svg>
+        </div>
+        <div class="emp-card__info">
+            <h2 id="emp-name">{{ employee.full_name or employee.first_name }}{% if employee.nickname %} ({{ employee.nickname }}){% endif %}</h2>
+            <div class="emp-card__meta">
+                {% if employee.phone_number %}
+                <a href="tel:{{ employee.phone_number }}" class="crew-row__phone">{{ employee.phone_number }}</a>
+                {% endif %}
+                {% if employee.email %}
+                <span class="crew-row__email">{{ employee.email }}</span>
+                {% endif %}
+            </div>
+            <div class="emp-card__meta">
+                {% if employee.crew %}<span>{{ employee.crew }}</span>{% endif %}
+                {% if employee.role %}<span>{{ employee.role }}</span>{% endif %}
+            </div>
+        </div>
+        <div class="emp-card__actions">
+            <span class="badge {{ 'badge--confirmed' if employee.is_active else 'badge--rejected' }}">
+                {{ 'Active' if employee.is_active else 'Inactive' }}
+            </span>
+            <button class="btn btn--secondary btn--small" onclick="toggleEditEmployee()">Edit</button>
+        </div>
+    </div>
+
+    <!-- Inline Edit Form (hidden by default) -->
+    <div id="emp-edit-form" class="edit-form" style="display:none;">
+        <h4>Edit Employee</h4>
+        <div id="emp-edit-error" class="error-msg" style="display:none;"></div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>First Name</label>
+                <input type="text" id="edit-first-name" value="{{ employee.first_name }}">
+            </div>
+            <div class="form-group">
+                <label>Full Name</label>
+                <input type="text" id="edit-full-name" value="{{ employee.full_name or '' }}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Phone</label>
+                <input type="tel" id="edit-phone" value="{{ employee.phone_number or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="edit-email" value="{{ employee.email or '' }}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Crew</label>
+                <input type="text" id="edit-crew" value="{{ employee.crew or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Role</label>
+                <input type="text" id="edit-role" value="{{ employee.role or '' }}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Nickname</label>
+                <input type="text" id="edit-nickname" value="{{ employee.nickname or '' }}" placeholder="e.g. Cat, Tobacco">
+            </div>
+            <div class="form-group" style="display:flex; align-items:flex-end; gap:8px; padding-bottom:2px;">
+                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="checkbox" id="edit-is-driver" {% if employee.is_driver %}checked{% endif %}>
+                    Driver
+                </label>
+            </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="btn btn--primary btn--small" onclick="saveEmployee()">Save</button>
+            <button class="btn btn--secondary btn--small" onclick="toggleEditEmployee()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Cert Badge Row -->
+<div class="card" style="margin-top:16px;">
+    <h3>Certifications</h3>
+    <div id="cert-badges" class="crew-row__badges" style="margin-bottom:16px;">
+        <!-- Filled by JS -->
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+        <button class="btn btn--primary btn--small" onclick="showAddCertForm()">+ Add Certification</button>
+    </div>
+
+    <!-- Add Cert Form (hidden) -->
+    <div id="add-cert-form" class="edit-form" style="display:none; margin-bottom:16px;">
+        <h4>Add Certification</h4>
+        <div id="add-cert-error" class="error-msg" style="display:none;"></div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Certification Type *</label>
+                <select id="cert-type-select">
+                    <option value="">Select type...</option>
+                    {% for ct in cert_types %}
+                    <option value="{{ ct.id }}">{{ ct.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Issuing Organization</label>
+                <input type="text" id="cert-issuing-org" placeholder="e.g. Safety Solutions & Supply">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Issue Date</label>
+                <input type="date" id="cert-issued">
+            </div>
+            <div class="form-group">
+                <label>Expiry Date</label>
+                <input type="date" id="cert-expires">
+            </div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px;">
+            <label>Notes</label>
+            <input type="text" id="cert-notes" placeholder="Optional notes">
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button class="btn btn--primary btn--small" onclick="submitAddCert()">Save</button>
+            <button class="btn btn--secondary btn--small" onclick="hideAddCertForm()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Certs Table -->
+    <div id="certs-loading" class="loading">Loading certifications...</div>
+    <div id="certs-empty" style="display:none; text-align:center; padding:24px; color:var(--text-muted);">
+        No certifications on file. Click "Add Certification" to get started.
+    </div>
+    <table id="certs-table" class="data-table" style="display:none;">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Issued</th>
+                <th>Expires</th>
+                <th>Status</th>
+                <th>Doc</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="certs-tbody"></tbody>
+    </table>
+</div>
+
+<!-- QR Code Section -->
+<div class="card" style="margin-top:16px;">
+    <h3>QR Code</h3>
+    {% if employee.public_token %}
+    <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; padding:8px 0;">
+        <div id="qr-container" style="text-align:center;">
+            <img id="qr-image" src="/api/crew/employees/{{ employee.id }}/qr" alt="QR Code" style="width:200px; height:200px; border:1px solid var(--border); border-radius:8px;">
+            <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">Scan to verify certifications</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            <a href="/api/crew/employees/{{ employee.id }}/qr" download="qr_{{ employee.full_name or employee.first_name | replace(' ', '_') }}.png" class="btn btn--primary btn--small">Download PNG</a>
+            <button class="btn btn--secondary btn--small" onclick="printQR()">Print</button>
+            <button class="btn btn--secondary btn--small" style="color:var(--danger);" onclick="regenerateToken()">Regenerate</button>
+        </div>
+    </div>
+    {% else %}
+    <div style="text-align:center; padding:16px 0; color:var(--text-muted); font-size:14px;">
+        <p>No verification token set.</p>
+        <button class="btn btn--primary btn--small" style="margin-top:8px;" onclick="regenerateToken()">Generate QR Code</button>
+    </div>
+    {% endif %}
+</div>
+
+<!-- QR Scan Log -->
+<div class="card" style="margin-top:16px;">
+    <h3>QR Code Scan Log</h3>
+    <div id="scan-log-loading" style="text-align:center; padding:16px 0; color:var(--text-muted); font-size:14px;">Loading scan log...</div>
+    <div id="scan-log-empty" style="display:none; text-align:center; padding:16px 0; color:var(--text-muted); font-size:14px;">No scans recorded yet.</div>
+    <table id="scan-log-table" class="data-table" style="display:none;">
+        <thead>
+            <tr>
+                <th>Date/Time</th>
+                <th>IP Address</th>
+            </tr>
+        </thead>
+        <tbody id="scan-log-tbody"></tbody>
+    </table>
+</div>
+
+<!-- Notes Section -->
+<div class="card" style="margin-top:16px;">
+    <h3>Notes</h3>
+    <textarea id="emp-notes" class="notes-input" rows="3" placeholder="Add notes about this employee...">{{ employee.notes or '' }}</textarea>
+    <button class="btn btn--secondary btn--small" onclick="saveNotes()">Save Notes</button>
+</div>
+
+<!-- Safety Violations Placeholder -->
+<div class="card" style="margin-top:16px;">
+    <h3>Safety Violations</h3>
+    <p style="color:var(--text-muted); font-size:14px; padding:16px 0; text-align:center;">No safety violations recorded.</p>
+</div>
+<!-- Cert Document Viewer Modal -->
+<div id="cert-doc-modal" class="modal" style="display:none;">
+    <div class="modal-backdrop" onclick="closeCertModal()"></div>
+    <div class="modal-content" style="max-width:960px; height:90vh;">
+        <button class="modal-close" onclick="closeCertModal()">&times;</button>
+        <div style="padding:12px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+            <div>
+                <strong id="cert-doc-title"></strong>
+            </div>
+            <a id="cert-doc-download" href="#" download class="btn btn--primary btn--small">Download</a>
+        </div>
+        <div style="flex:1; min-height:0;">
+            <iframe id="cert-doc-frame" src="" style="width:100%; height:100%; border:none;"></iframe>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const EMP_ID = {{ employee.id }};
+const CERT_TYPES = {{ cert_types | tojson }};
+let certsData = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadCerts();
+    loadScanLog();
+});
+
+async function loadCerts() {
+    try {
+        const resp = await fetch(`/api/crew/employees/${EMP_ID}/certs`);
+        certsData = await resp.json();
+        renderBadges();
+        renderCertsTable();
+    } catch (err) {
+        document.getElementById('certs-loading').textContent = 'Failed to load certifications.';
+    }
+}
+
+function renderBadges() {
+    const container = document.getElementById('cert-badges');
+    // Build lookup of certs by type_id
+    const lookup = {};
+    certsData.forEach(c => {
+        if (!lookup[c.cert_type_id]) lookup[c.cert_type_id] = c;
+    });
+
+    let html = '';
+    CERT_TYPES.forEach(ct => {
+        const cert = lookup[ct.id];
+        const status = cert ? cert.status : 'none';
+        if (status === 'none') return;
+        const cssStatus = (status === 'no_expiry') ? 'valid' : status;
+        const titleStatus = (status === 'no_expiry') ? 'no expiry date' : status;
+        var icon = CERT_ICONS[ct.slug] || '';
+        var abbr = CERT_ABBR[ct.slug] || ct.slug.substring(0, 2).toUpperCase();
+        if (cert && cert.document_path) {
+            html += `<a href="#cert-${ct.slug}" class="cert-badge cert-badge--${cssStatus}" title="${ct.name}: ${titleStatus}" onclick="event.preventDefault(); openCertDoc('${escHtml(cert.document_path)}', '${escHtml(ct.name)}')">${icon}${abbr}</a>`;
+        } else {
+            html += `<a href="#cert-${ct.slug}" class="cert-badge cert-badge--${cssStatus}" title="${ct.name}: ${titleStatus}">${icon}${abbr}</a>`;
+        }
+    });
+    container.innerHTML = html;
+}
+
+function renderCertsTable() {
+    const loading = document.getElementById('certs-loading');
+    const empty = document.getElementById('certs-empty');
+    const table = document.getElementById('certs-table');
+    const tbody = document.getElementById('certs-tbody');
+
+    loading.style.display = 'none';
+
+    if (certsData.length === 0) {
+        empty.style.display = 'block';
+        table.style.display = 'none';
+        return;
+    }
+
+    empty.style.display = 'none';
+    table.style.display = 'table';
+
+    let html = '';
+    certsData.forEach(c => {
+        const statusClass = c.status === 'valid' ? 'badge--confirmed' :
+                           c.status === 'expiring' ? 'badge--pending' : 'badge--flagged';
+        const statusLabel = c.status.charAt(0).toUpperCase() + c.status.slice(1);
+        const docIcon = c.document_path
+            ? `<button class="row-action-btn" title="View document" onclick="event.stopPropagation(); openCertDoc('${escHtml(c.document_path)}', '${escHtml(c.cert_type_name)}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>`
+            : '<span style="color:var(--text-light);">—</span>';
+
+        html += `<tr id="cert-${c.cert_type_slug}">
+            <td><strong>${escHtml(c.cert_type_name)}</strong>
+                ${c.issuing_org ? '<br><span class="text-muted">' + escHtml(c.issuing_org) + '</span>' : ''}
+            </td>
+            <td>${c.issued_at || '—'}</td>
+            <td>${c.expires_at || 'No expiry'}</td>
+            <td><span class="badge ${statusClass}">${statusLabel}</span></td>
+            <td>${docIcon}</td>
+            <td class="cell-actions">
+                <button class="row-action-btn row-action-btn--edit" title="Edit" onclick="editCert(${c.id})">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="row-action-btn row-action-btn--delete" title="Delete" onclick="deleteCert(${c.id}, '${escHtml(c.cert_type_name)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+// SVG icons for each cert type
+var CERT_ICONS = {
+    'osha-10':  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h2l1-5h14l1 5h2"/><path d="M6 13c0-4 2.5-8 6-9 3.5 1 6 5 6 9"/></svg>',
+    'osha-30':  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h2l1-5h14l1 5h2"/><path d="M6 13c0-4 2.5-8 6-9 3.5 1 6 5 6 9"/><path d="M12 4v2"/></svg>',
+    'first-aid-cpr': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v12"/><path d="M6 12h12"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>',
+    'fall-protection': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v5"/><path d="M8 22l4-10 4 10"/><path d="M9 12h6"/></svg>',
+    'ext-reach-forklift': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="14" width="10" height="6" rx="1"/><path d="M16 8h4v12h-4"/><path d="M12 17h4"/><circle cx="5" cy="22" r="1.5"/><circle cx="9" cy="22" r="1.5"/><path d="M16 8V4h4"/></svg>',
+    'driver': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>',
+    'bilingual': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 10"/><path d="M10 8l-5 10"/><path d="M2 14h8"/><path d="M15 4h6"/><path d="M18 4v8"/><path d="M15 8c1 2 3 4 6 4"/><path d="M21 8c-1 2-3 4-6 4"/></svg>',
+    'crew-lead': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12,2 15,9 22,9 16.5,14 18.5,21 12,17 5.5,21 7.5,14 2,9 9,9"/></svg>',
+    'card-holder': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>',
+    'aerial-work-platform': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-4h6v4"/><path d="M10 11h4"/></svg>',
+    'basic-rigging': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8"/><path d="M8 10h8"/><path d="M6 10l-2 10h4"/><path d="M18 10l2 10h-4"/><path d="M10 20h4"/></svg>',
+    'rigger-signal-person': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M12 6v4"/><path d="M8 10h8"/><path d="M6 10l-2 10h4"/><path d="M18 10l2 10h-4"/><path d="M10 20h4"/></svg>'
+};
+var CERT_ABBR = {
+    'osha-10': 'O10', 'osha-30': 'O30', 'first-aid-cpr': 'FA',
+    'fall-protection': 'FP', 'ext-reach-forklift': 'FK', 'aerial-work-platform': 'AW',
+    'driver': 'DR', 'bilingual': 'BL', 'crew-lead': 'CL', 'card-holder': 'CH',
+    'basic-rigging': 'BR', 'rigger-signal-person': 'RS'
+};
+
+function escHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// ── Employee Edit ──
+function toggleEditEmployee() {
+    const form = document.getElementById('emp-edit-form');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveEmployee() {
+    const errEl = document.getElementById('emp-edit-error');
+    errEl.style.display = 'none';
+    try {
+        const resp = await fetch(`/api/employees/${EMP_ID}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                first_name: document.getElementById('edit-first-name').value.trim(),
+                full_name: document.getElementById('edit-full-name').value.trim(),
+                phone_number: document.getElementById('edit-phone').value.trim(),
+                email: document.getElementById('edit-email').value.trim(),
+                crew: document.getElementById('edit-crew').value.trim(),
+                role: document.getElementById('edit-role').value.trim(),
+                nickname: document.getElementById('edit-nickname').value.trim(),
+                is_driver: document.getElementById('edit-is-driver').checked ? 1 : 0,
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            errEl.textContent = data.error || 'Failed to update.';
+            errEl.style.display = 'block';
+            return;
+        }
+        window.location.reload();
+    } catch (err) {
+        errEl.textContent = 'Network error.';
+        errEl.style.display = 'block';
+    }
+}
+
+// ── Add Cert ──
+function showAddCertForm() {
+    document.getElementById('add-cert-form').style.display = 'block';
+}
+function hideAddCertForm() {
+    document.getElementById('add-cert-form').style.display = 'none';
+    document.getElementById('add-cert-error').style.display = 'none';
+}
+
+async function submitAddCert() {
+    const certTypeId = document.getElementById('cert-type-select').value;
+    const errEl = document.getElementById('add-cert-error');
+    if (!certTypeId) {
+        errEl.textContent = 'Please select a certification type.';
+        errEl.style.display = 'block';
+        return;
+    }
+    errEl.style.display = 'none';
+    try {
+        const resp = await fetch('/api/crew/certifications', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                employee_id: EMP_ID,
+                cert_type_id: parseInt(certTypeId),
+                issued_at: document.getElementById('cert-issued').value || null,
+                expires_at: document.getElementById('cert-expires').value || null,
+                issuing_org: document.getElementById('cert-issuing-org').value.trim() || null,
+                notes: document.getElementById('cert-notes').value.trim() || null,
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            errEl.textContent = data.error || 'Failed to add certification.';
+            errEl.style.display = 'block';
+            return;
+        }
+        hideAddCertForm();
+        loadCerts();
+    } catch (err) {
+        errEl.textContent = 'Network error.';
+        errEl.style.display = 'block';
+    }
+}
+
+// ── Edit Cert (reuses add form for simplicity) ──
+async function editCert(certId) {
+    const cert = certsData.find(c => c.id === certId);
+    if (!cert) return;
+    document.getElementById('cert-type-select').value = cert.cert_type_id;
+    document.getElementById('cert-issued').value = cert.issued_at || '';
+    document.getElementById('cert-expires').value = cert.expires_at || '';
+    document.getElementById('cert-issuing-org').value = cert.issuing_org || '';
+    document.getElementById('cert-notes').value = cert.notes || '';
+    showAddCertForm();
+
+    // Swap save button to update mode
+    const form = document.getElementById('add-cert-form');
+    form.querySelector('h4').textContent = 'Edit Certification';
+    const saveBtn = form.querySelector('.btn--primary');
+    saveBtn.onclick = async function() {
+        const errEl = document.getElementById('add-cert-error');
+        errEl.style.display = 'none';
+        try {
+            const resp = await fetch(`/api/crew/certifications/${certId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    cert_type_id: parseInt(document.getElementById('cert-type-select').value),
+                    issued_at: document.getElementById('cert-issued').value || null,
+                    expires_at: document.getElementById('cert-expires').value || null,
+                    issuing_org: document.getElementById('cert-issuing-org').value.trim() || null,
+                    notes: document.getElementById('cert-notes').value.trim() || null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                errEl.textContent = data.error || 'Failed to update.';
+                errEl.style.display = 'block';
+                return;
+            }
+            hideAddCertForm();
+            form.querySelector('h4').textContent = 'Add Certification';
+            saveBtn.onclick = submitAddCert;
+            loadCerts();
+        } catch (err) {
+            errEl.textContent = 'Network error.';
+            errEl.style.display = 'block';
+        }
+    };
+}
+
+// ── Delete Cert ──
+async function deleteCert(certId, typeName) {
+    if (!confirm(`Delete ${typeName} certification? This can be undone by an admin.`)) return;
+    try {
+        const resp = await fetch(`/api/crew/certifications/${certId}/delete`, {method: 'POST'});
+        if (resp.ok) loadCerts();
+    } catch (err) {
+        alert('Failed to delete certification.');
+    }
+}
+
+// ── Cert Document Modal ──
+function openCertDoc(docPath, certName) {
+    const modal = document.getElementById('cert-doc-modal');
+    const frame = document.getElementById('cert-doc-frame');
+    const dl = document.getElementById('cert-doc-download');
+    const title = document.getElementById('cert-doc-title');
+    const url = '/certs/file/' + docPath.replace('cert_files/', '');
+    frame.src = url;
+    dl.href = url;
+    title.textContent = (certName || 'Certificate') + ' — ' + document.getElementById('emp-name').textContent;
+    modal.style.display = 'flex';
+}
+function closeCertModal() {
+    const modal = document.getElementById('cert-doc-modal');
+    modal.style.display = 'none';
+    document.getElementById('cert-doc-frame').src = '';
+}
+
+// ── QR Code ──
+async function regenerateToken() {
+    const msg = document.getElementById('qr-image')
+        ? 'This will invalidate the current QR code. Any printed cards will need to be reprinted. Continue?'
+        : 'Generate a new QR code for this employee?';
+    if (!confirm(msg)) return;
+    try {
+        const resp = await fetch(`/api/crew/employees/${EMP_ID}/regenerate-token`, {method: 'POST'});
+        if (resp.ok) window.location.reload();
+        else alert('Failed to regenerate token.');
+    } catch (err) {
+        alert('Network error.');
+    }
+}
+
+function printQR() {
+    const img = document.getElementById('qr-image');
+    if (!img) return;
+    const name = document.getElementById('emp-name').textContent;
+    const w = window.open('', '_blank');
+    w.document.write(`<!DOCTYPE html><html><head><title>QR Code - ${name}</title>
+        <style>body{font-family:sans-serif;text-align:center;padding:40px;}
+        img{width:300px;height:300px;}h2{margin-bottom:8px;}p{color:#666;font-size:14px;}
+        @media print{body{padding:20px;}}</style></head><body>
+        <h2>${name}</h2>
+        <img src="${img.src}" alt="QR Code">
+        <p>Scan to verify certifications</p>
+        <p style="margin-top:24px;font-size:11px;color:#999;">Client Company</p>
+        <script>window.onload=function(){window.print();}<\/script>
+        </body></html>`);
+    w.document.close();
+}
+
+// ── Scan Log ──
+async function loadScanLog() {
+    try {
+        const resp = await fetch(`/api/crew/employees/${EMP_ID}/scan-log`);
+        const scans = await resp.json();
+        const loading = document.getElementById('scan-log-loading');
+        const empty = document.getElementById('scan-log-empty');
+        const table = document.getElementById('scan-log-table');
+        const tbody = document.getElementById('scan-log-tbody');
+        loading.style.display = 'none';
+        if (scans.length === 0) {
+            empty.style.display = 'block';
+            return;
+        }
+        table.style.display = 'table';
+        let html = '';
+        scans.forEach(s => {
+            const d = new Date(s.scanned_at + 'Z');
+            const fmt = d.toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})
+                + ' ' + d.toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
+            html += `<tr><td>${fmt}</td><td>${escHtml(s.ip_address || '—')}</td></tr>`;
+        });
+        tbody.innerHTML = html;
+    } catch (err) {
+        document.getElementById('scan-log-loading').textContent = 'Failed to load scan log.';
+    }
+}
+
+// ── Notes ──
+async function saveNotes() {
+    const notes = document.getElementById('emp-notes').value;
+    try {
+        await fetch(`/api/employees/${EMP_ID}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notes: notes}),
+        });
+    } catch (err) {
+        alert('Failed to save notes.');
+    }
+}
+</script>
+{% endblock %}
